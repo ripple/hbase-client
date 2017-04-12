@@ -1,0 +1,37 @@
+{
+  "name": "ripple-hbase-client",
+  "version": "0.0.1",
+  "description": "ripple hbase client",
+  "main": "src/index.js",
+  "dependencies": {
+    "bluebird": "^3.5.0",
+    "colors": "^1.1.2",
+    "int64-buffer": "^0.1.9",
+    "moment": "^2.18.1",
+    "thrift": "^0.10.0",
+    "winston": "^2.3.1"
+  },
+  "devDependencies": {
+    "babel-eslint": "^7.2.1",
+    "eslint": "2.9.0",
+    "mocha": "^3.2.0"
+  },
+  "scripts": {
+    "test": "node_modules/.bin/mocha --ui tdd -R spec test/*.js",
+    "lint": "if ! [ -f eslintrc ]; then curl -o eslintrc 'https://raw.githubusercontent.com/ripple/javascript-style-guide/es6/eslintrc' >> eslintrc; fi; eslint -c eslintrc src test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/ripple/hbase-client.git"
+  },
+  "engines": {
+    "node": ">=6.9.2"
+  },
+  "bugs": {
+    "url": "https://github.com/ripple/hbase-client/issues"
+  },
+  "homepage": "https://github.com/ripple/hbase-client#readme",
+  "author": "matthew@ripple.com",
+  "license": "ISC",
+  "readmeFilename": "README.md"
+}

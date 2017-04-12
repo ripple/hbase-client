@@ -1,0 +1,35 @@
+{
+  "row": {
+    "table": "test",
+    "rowkey": "ROW|1",
+    "columns": {
+      "foo": "bar",
+      "baz": "foo"
+    }
+  },
+  "rowWithColumnFamilies": {
+    "table": "test",
+    "rowkey": "ROW|2",
+    "columns": {
+      "d:foo": "bar",
+      "f:baz": "foo"
+    }
+  },
+  "rows": {
+    "table": "test",
+    "rows": {
+      "ROW|3" : {
+        "column0": 0,
+        "column1": 1,
+        "column2": "two",
+        "columnJSON": {
+          "some": "json"
+        }
+      },
+      "ROW|4" : {
+        "column5": 5,
+        "column6": "six"
+      }
+    }
+  }
+}
