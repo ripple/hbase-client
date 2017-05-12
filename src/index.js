@@ -3,8 +3,6 @@ const thrift = require('thrift')
 const HBase = require('./gen/Hbase')
 const HBaseTypes = require('./gen/Hbase_types')
 const Logger = require('./logger')
-const int64BE = require('int64-buffer').Int64BE
-
 
 /**
  * formatRows
@@ -204,49 +202,44 @@ HbaseClient.prototype._getConnection = function() {
     })
   }
 
-  /**
-   * getOpenConnection
-   */
-
-  function getOpenConnection(attempts, cb) {
-    let i = self.pool.length
-
-    if (attempts > 100) {
-      cb('unable to get open connection')
-      return
-    }
-
-
-    // look for a free socket
-    while (i--) {
-      if (self.pool[i].client &&
-          self.pool[i].connected &&
-          Object.keys(self.pool[i].client._reqs).length < 10 &&
-          !self.pool[i].keep) {
-
-        cb(null, self.pool[i])
-        self.log.debug('# connections:', self.pool.length, ' - current:', i)
-        return
-      }
-    }
-
-    // open a new socket if there is room in the pool
-    if (self.pool.length < self.max_sockets) {
-      openNewSocket(self.pool.length % self._servers.length)
-    }
-
-    // recheck for connected socket
-    setTimeout(getOpenConnection.bind(self, attempts + 1, cb), 50)
-  }
-
   return new Promise((resolve, reject) => {
-    getOpenConnection(0, (err, connection) => {
-      if (err) {
-        reject(err)
-      } else {
-        resolve(connection)
+   const timer = setTimeout(() => {
+      reject('unable to get open connection, ' +
+        self.pool.length + ' of ' + self.max_sockets + ' in use')
+    }, self._timeout)
+
+
+    /**
+     * getOpenConnection
+     */
+
+    function getOpenConnection() {
+      var i = self.pool.length;
+
+      //look for a free socket
+      while (i--) {
+        if (self.pool[i].client &&
+            self.pool[i].connected &&
+            Object.keys(self.pool[i].client._reqs).length < 10 &&
+            !self.pool[i].keep) {
+
+          clearTimeout(timer)
+          resolve(self.pool[i])
+          self.log.debug("# connections:", self.pool.length, '- current:', i);
+          return;
+        }
       }
-    })
+
+      //open a new socket if there is room in the pool
+      if (self.pool.length < self.max_sockets) {
+        openNewSocket(self.pool.length % self._servers.length);
+      }
+
+      //recheck for connected socket
+      setTimeout(getOpenConnection, 20);
+    }
+
+    getOpenConnection()
   })
 }
 
@@ -317,10 +310,17 @@ HbaseClient.prototype.disableTable = function(name) {
   .then(connection => {
     return new Promise((resolve, reject) => {
       connection.client.disableTable(name, (err, resp) => {
-        if (err) {
+        if (err &&
+            err.message &&
+            err.message.includes('TableNotEnabledException')) {
+          self.log.info('table: ' + name + ' not enabled')
+          resolve()
+
+        } else if (err) {
           reject(err)
+
         } else {
-          resolve(resp)
+          resolve()
         }
       })
     })
@@ -339,8 +339,15 @@ HbaseClient.prototype.deleteTable = function(name) {
   .then(connection => {
     return new Promise((resolve, reject) => {
       connection.client.deleteTable(name, (err, resp) => {
-        if (err) {
+        if (err &&
+            err.message &&
+            err.message.includes('TableNotEnabledException')) {
+          self.log.info('table: ' + name + ' not found')
+          resolve()
+
+        } else if (err) {
           reject(err)
+
         } else {
           resolve(resp)
         }
@@ -562,9 +569,19 @@ HbaseClient.prototype.putRow = function(options) {
 
 HbaseClient.prototype.getScan = function(options) {
   const self = this
-  const limit = (options.limit || 200) + 1
   const scanOpts = {}
+  let limit = options.limit
   let swap
+
+  if (limit && !options.excludeMarker) {
+    limit += 1
+  }
+
+  if (options.marker && options.descending === true) {
+    options.stopRow = options.marker
+  } else if (options.marker) {
+    options.startRow = options.marker
+  }
 
   if (options.marker && options.descending === true) {
     options.stopRow = options.marker
@@ -625,7 +642,7 @@ HbaseClient.prototype.getScan = function(options) {
      */
 
     function getResults(connection, id, callback) {
-      const batchSize = 2
+      const batchSize = 5000
       const results = []
       let page = 1
       let max
@@ -722,7 +739,8 @@ HbaseClient.prototype.getScan = function(options) {
   }
 
   function handleResponse(rows) {
-    if (rows.length === limit) {
+    if (rows.length === limit &&
+       !options.excludeMarker) {
       const marker = rows.pop().rowkey
       return {
         rows: rows,
@@ -863,12 +881,13 @@ HbaseClient.prototype.buildFilterString = function(filters) {
       return [
         'SingleColumnValueFilter (\'',
         o.family, '\', \'',
-        o.qualifier, '\', \'',
+        o.qualifier, '\', ',
         o.comparator, ', \'binary:',
         o.value, '\', ',
         filterMissing, ', ',
         latest, ')'
       ].join('')
+
     } else {
       return undefined
     }
