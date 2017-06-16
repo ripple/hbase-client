@@ -6,7 +6,6 @@
   "dependencies": {
     "bluebird": "^3.5.0",
     "colors": "^1.1.2",
-    "int64-buffer": "^0.1.9",
     "moment": "^2.18.1",
     "thrift": "^0.10.0",
     "winston": "^2.3.1"
