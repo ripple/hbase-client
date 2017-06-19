@@ -5,7 +5,8 @@ const hbase = new Hbase({
   host: 'hbase',
   port: 9090,
   prefix: 'prefix',
-  logLevel: 3
+  logLevel: 3,
+  max_sockets: 1000
 })
 
 describe('hbase client', function() {
@@ -27,7 +28,6 @@ describe('hbase client', function() {
     return hbase.getTables()
     .then(tables => {
       const list = []
-
       tables.forEach(name => {
         list.push(deleteTable(name))
       })
@@ -36,7 +36,15 @@ describe('hbase client', function() {
     })
   })
 
+  it('should err if table does not exist on delete', function() {
+    return hbase.deleteTable('foo')
+    .catch(err => {
+      assert.strictEqual(err, 'table: \'foo\' not found')
+    })
+  })
+
   it('should create a tables', function() {
+    this.timeout(10000)
     return hbase.createTable({
       table: 'test',
       columnFamilies: ['f', 'd']
@@ -136,6 +144,29 @@ describe('hbase client', function() {
       assert.strictEqual(resp.rows.length, 4)
       assert.strictEqual(resp.rows[0].rowkey, 'ROW|4')
     })
+  })
+
+  it('should do a of scans, puts, and gets', function() {
+    this.timeout(20000)
+    let i = 300
+    const list = []
+    while (i--) {
+
+      list.push(hbase.putRow(mock.row))
+      list.push(hbase.getRow({
+        table: mock.row.table,
+        rowkey: mock.row.rowkey
+      }))
+
+      list.push(hbase.getScan({
+        table: 'test',
+        startRow: 'A',
+        stopRow: 'Z',
+        descending: true
+      }))
+    }
+
+    return Promise.all(list)
   })
 
   it('should delete a column', function() {
