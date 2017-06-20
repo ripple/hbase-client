@@ -1,4 +1,6 @@
+/* eslint prefer-spread: 1 */
 const thrift = require('thrift')
+const pool = require('node-thrift-pool')
 const HBase = require('./gen/Hbase')
 const HBaseTypes = require('./gen/Hbase_types')
 const Logger = require('./logger')
@@ -88,7 +90,6 @@ function prepareColumns(data) {
  */
 
 function HbaseClient(options) {
-  const self = this
 
   if (!options) {
     throw Error('initialization options required.')
@@ -96,12 +97,7 @@ function HbaseClient(options) {
     throw Error('host and port required required.')
   }
 
-  this.max_sockets = options.max_sockets || 5000
   this._prefix = options.prefix || ''
-  this._servers = options.servers || null
-  this._timeout = options.timeout || 30000 // also acts as keepalive
-  this._connection = null
-  this.hbase = null
   this.logStats = (!options.logLevel || options.logLevel > 3) ? true : false
   this.log = new Logger({
     scope: 'hbase-thrift',
@@ -109,22 +105,19 @@ function HbaseClient(options) {
     file: options.logFile
   })
 
-  this.pool = []
 
-  if (!this._servers) {
-    this._servers = [{
-      host: options.host,
-      port: options.port
-    }]
-  }
-
-  // report the number of connections
-  // every 60 seconds
-  if (this.logStats) {
-    setInterval(function() {
-      self.log.debug('connections:' + self.pool.length)
-    }, 60 * 1000)
-  }
+  this.client = pool(thrift, HBase, {
+    host: options.host,
+    port: options.port,
+    min_connections: options.min_sockets || 0,
+    max_connections: options.max_sockets || 1000,
+    idle_timeout: options.idle_timeout || options.timeout || 30000,
+    log: false
+  }, {
+    transport: thrift.TFramedTransport,
+    protocol: thrift.TBinaryProtocol,
+    timeout: options.timeout || 30000
+  })
 }
 
 HbaseClient.prototype.query = function() {
@@ -133,161 +126,28 @@ HbaseClient.prototype.query = function() {
   const name = args.shift()
   let d = Date.now()
 
-  function executeQuery(connection) {
-    return new Promise((resolve, reject) => {
-
-      function handleResponse(err, resp) {
-
-        // log stats
-        if (self.logStats) {
-          d = (Date.now() - d) / 1000
-          self.log.debug(name,
-          'time:' + d + 's')
-        }
-
-        if (err) {
-          reject(err)
-        } else {
-          resolve(resp)
-        }
-
-
-      }
-
-      args.push(handleResponse)
-      connection.client[name].apply(connection.client, args)
-    })
-  }
-
-  return this._getConnection()
-  .then(executeQuery)
-}
-
-
-/**
- * _getConnection
- * get an hbase connection from the pool
- */
-
-HbaseClient.prototype._getConnection = function() {
-  const self = this
   return new Promise((resolve, reject) => {
 
-    const timer = setTimeout(() => {
-      reject('unable to get open connection, ' +
-        self.pool.length + ' of ' + self.max_sockets + ' in use')
-    }, self._timeout)
+    function handleResponse(err, resp) {
 
-    /**
-     * handleNewConnectionError
-     */
-
-    function handleNewConnectionError(err) {
-      this.error('error opening connection: ' + err)
-      reject(err)
-    }
-
-    /**
-     * onConnect
-     */
-
-    function onConnect() {
-      this.removeListener('error', handleNewConnectionError)
-      this.client = thrift.createClient(HBase, this)
-
-      this.on('timeout', function() {
-        this.error('thrift client connection timeout')
-      })
-
-      this.on('close', function() {
-        this.error('hbase connection closed')
-      })
-
-      this.on('error', function(err) {
-        this.error('thrift connection error: ' + err)
-      })
-
-      resolve(this)
-    }
-
-    /**
-     * openNewSocket
-     */
-
-    function openNewSocket(i) {
-      const server = self._servers[i || 0]
-
-      // create new connection
-      const connection = thrift.createConnection(server.host, server.port, {
-        transport: thrift.TFramedTransport,
-        protocol: thrift.TBinaryProtocol,
-        timeout: self._timeout
-      })
-
-
-      // handle errors
-      connection.error = function(err) {
-        this.connected = false
-
-        // execute any callbacks, then delete
-        if (this.client) {
-          for (const key in this.client._reqs) {
-            this.client._reqs[key](err)
-            delete (this.client._reqs[key])
-          }
-        }
-
-        // destroy the connection
-        this.connection.destroy()
-
-        // remove from pool
-        for (let j = 0; j < self.pool.length; j++) {
-          if (self.pool[j] === this) {
-            delete self.pool[j]
-            self.pool.splice(j, 1)
-            break
-          }
-        }
+      // log stats
+      if (self.logStats) {
+        d = (Date.now() - d) / 1000
+        self.log.debug(name,
+        'time:' + d + 's')
       }
 
-      self.pool.push(connection)
-      connection.once('error', handleNewConnectionError)
-      connection.once('connect', onConnect)
-      self.log.debug('# connections:', self.pool.length)
-    }
-
-    /**
-     * getOpenConnection
-     */
-
-    function getConnection() {
-      let i = self.pool.length
-
-      // look for a free socket
-      while (i--) {
-        if (self.pool[i].client &&
-            self.pool[i].connected &&
-            Object.keys(self.pool[i].client._reqs).length < 1) {
-
-          clearTimeout(timer)
-          resolve(self.pool[i])
-          // self.log.debug('# connections:', self.pool.length, '- current:', i)
-          return
-        }
-      }
-
-      // open a new socket if there is room in the pool
-      if (self.pool.length < self.max_sockets) {
-        openNewSocket(self.pool.length % self._servers.length)
+      if (err) {
+        reject(err)
       } else {
-        setTimeout(getConnection, 10)
+        resolve(resp)
       }
     }
 
-    getConnection()
+    args.push(handleResponse)
+    self.client[name].apply(self.client, args)
   })
 }
-
 
 /**
  * getTables
@@ -343,7 +203,7 @@ HbaseClient.prototype.disableTable = function(name) {
       self.log.info('table: ' + name + ' not enabled')
 
     } else {
-      throw(err)
+      throw (err)
     }
   })
 }
@@ -365,10 +225,10 @@ HbaseClient.prototype.deleteTable = function(name) {
 
     } else if (err.message &&
         err.message.includes('table does not exist')) {
-      throw('table: \'' + name + '\' not found')
+      throw new Error('table: \'' + name + '\' not found')
 
     } else {
-      throw(err)
+      throw (err)
     }
   })
 }
@@ -384,10 +244,8 @@ HbaseClient.prototype.getRow = function(options) {
   const table = prefix + options.table
 
   function handleResponse(rows) {
-
-    if (rows) {
-      return formatRows(rows, options.includeFamilies)[0]
-    }
+    return rows ?
+      formatRows(rows, options.includeFamilies)[0] : undefined
   }
 
   if (options.columns) {
@@ -480,7 +338,7 @@ HbaseClient.prototype.putRows = function(options) {
   function putChunk(chunk) {
     self.log.debug('putRows:', table, chunk.length + ' rows')
     return self.query('mutateRows', table, chunk, null)
-    .then(resp => {
+    .then(() => {
       return chunk.length
     })
   }
@@ -545,7 +403,6 @@ HbaseClient.prototype.getScan = function(options) {
   const table = prefix + options.table
   const scanOpts = {}
   let limit = options.limit
-  let d = Date.now()
   let swap
 
   if (limit && !options.excludeMarker) {
@@ -607,8 +464,8 @@ HbaseClient.prototype.getScan = function(options) {
    */
 
   function getScan() {
+    const scan = new HBaseTypes.TScan(scanOpts)
     const results = []
-    let scan
 
     /**
      * getResults
@@ -618,8 +475,6 @@ HbaseClient.prototype.getScan = function(options) {
       const batchSize = 5000
       let page = 1
       let max
-
-
 
       return new Promise((resolve, reject) => {
 
@@ -669,8 +524,6 @@ HbaseClient.prototype.getScan = function(options) {
         self.log.error('error closing scanner:', e)
       })
     }
-
-    scan = new HBaseTypes.TScan(scanOpts)
 
     return self.query('scannerOpenWithScan', table, scan, null)
     .then(getResults)

@@ -17,7 +17,6 @@ describe('hbase client', function() {
 
   it('should delete existing tables', function() {
     this.timeout(5000)
-
     function deleteTable(name) {
       return hbase.disableTable(name)
       .then(() => {
@@ -39,12 +38,11 @@ describe('hbase client', function() {
   it('should err if table does not exist on delete', function() {
     return hbase.deleteTable('foo')
     .catch(err => {
-      assert.strictEqual(err, 'table: \'foo\' not found')
+      assert.strictEqual(err.message, 'table: \'foo\' not found')
     })
   })
 
   it('should create a tables', function() {
-    this.timeout(10000)
     return hbase.createTable({
       table: 'test',
       columnFamilies: ['f', 'd']
@@ -93,8 +91,7 @@ describe('hbase client', function() {
     })
   })
 
-  it('should get a rows by scan', function() {
-    this.timeout(5000)
+  it('should get rows by scan', function() {
     return hbase.getScan({
       table: 'test',
       startRow: 'A',
@@ -105,8 +102,7 @@ describe('hbase client', function() {
     })
   })
 
-  it('should get a rows by scan with limit', function() {
-    this.timeout(5000)
+  it('should get rows by scan with limit', function() {
     return hbase.getScan({
       table: 'test',
       startRow: 'A',
@@ -118,8 +114,7 @@ describe('hbase client', function() {
     })
   })
 
-  it('should get a rows by scan with marker', function() {
-    this.timeout(5000)
+  it('should get rows by scan with marker', function() {
     return hbase.getScan({
       table: 'test',
       startRow: 'A',
@@ -133,8 +128,7 @@ describe('hbase client', function() {
     })
   })
 
-  it('should get a rows by scan', function() {
-    this.timeout(5000)
+  it('should get rows by scan (inverted)', function() {
     return hbase.getScan({
       table: 'test',
       startRow: 'A',
@@ -147,7 +141,7 @@ describe('hbase client', function() {
   })
 
   it('should do a of scans, puts, and gets', function() {
-    this.timeout(20000)
+    this.timeout(7000)
     let i = 300
     const list = []
     while (i--) {
@@ -170,7 +164,6 @@ describe('hbase client', function() {
   })
 
   it('should delete a column', function() {
-    this.timeout(5000)
     return hbase.deleteColumn({
       table: 'test',
       rowkey: 'ROW|1',
@@ -179,7 +172,6 @@ describe('hbase client', function() {
   })
 
   it('should delete columns', function() {
-    this.timeout(5000)
     return hbase.deleteColumns({
       table: 'test',
       rowkey: mock.rowWithColumnFamilies.rowkey,
@@ -188,7 +180,6 @@ describe('hbase client', function() {
   })
 
   it('should delete a row', function() {
-    this.timeout(5000)
     return hbase.deleteRow({
       table: 'test',
       rowkey: 'ROW|1'
@@ -196,7 +187,6 @@ describe('hbase client', function() {
   })
 
   it('should delete rows', function() {
-    this.timeout(5000)
     return hbase.deleteRows({
       table: 'test',
       rowkeys: ['ROW|2', 'ROW|3']
