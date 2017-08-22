@@ -1,7 +1,10 @@
 /* eslint prefer-spread: 1 */
-const HbaseClientPool = require('./client')
+const HbaseClientPool = require('./pool')
 const HBaseTypes = require('./gen/Hbase_types')
 const Logger = require('./logger')
+
+const CLOSE_MESSAGE = 'HBASE client connection closed'
+const TIMEOUT_MESSAGE = 'Hbase client timeout'
 
 /**
  * formatRows
@@ -109,13 +112,25 @@ HbaseClient.prototype.query = function() {
   let d = Date.now()
 
   function runQuery(connection) {
-
     return new Promise((resolve, reject) => {
 
-      function handleResponse(err, resp) {
-        self.pool.release(connection)
+      function onError(e) {
+        reject(e)
+      }
 
-        // log stats
+      function onTimeout() {
+        reject(TIMEOUT_MESSAGE)
+      }
+
+      function onClose() {
+        reject(CLOSE_MESSAGE)
+      }
+
+      connection.on('error', onError)
+      connection.on('timeout', onTimeout)
+      connection.on('close', onClose)
+
+      function handleResponse(err, resp) {
         if (self.logStats) {
           d = (Date.now() - d) / 1000
           self.log.debug(name,
@@ -127,6 +142,11 @@ HbaseClient.prototype.query = function() {
         } else {
           resolve(resp)
         }
+
+        self.pool.release(connection)
+        connection.removeListener('error', onError)
+        connection.removeListener('timeout', onTimeout)
+        connection.removeListener('close', onClose)
       }
 
       args.push(handleResponse)
@@ -253,6 +273,35 @@ HbaseClient.prototype.getRow = function(options) {
                       table,
                       options.rowkey,
                       null)
+    .then(handleResponse)
+  }
+}
+
+/**
+ * getRows
+ */
+
+HbaseClient.prototype.getRows = function(options) {
+  const self = this
+  const prefix = options.prefix || self._prefix
+  const table = prefix + options.table
+
+  function handleResponse(rows) {
+    return rows ? formatRows(rows, options.includeFamilies) : []
+  }
+
+  if (options.columns) {
+    return self.query('getRowsWithColumns',
+               table,
+               options.rowkeys,
+               options.columns,
+               null)
+    .then(handleResponse)
+  } else {
+    return self.query('getRows',
+               table,
+               options.rowkeys,
+               null)
     .then(handleResponse)
   }
 }
@@ -456,48 +505,56 @@ HbaseClient.prototype.getScan = function(options) {
    */
 
   function getScan(connection) {
-    const scan = new HBaseTypes.TScan(scanOpts)
-    const results = []
+    return new Promise((resolve, reject) => {
+      const scan = new HBaseTypes.TScan(scanOpts)
+      const results = []
 
-    /**
-     * openScan
-     */
 
-    function openScan() {
-      return new Promise((resolve, reject) => {
-        connection.client.scannerOpenWithScan(table, scan, null, (err, res) => {
+      function onError(e) {
+        reject(e)
+      }
+
+      function onTimeout() {
+        reject(TIMEOUT_MESSAGE)
+      }
+
+      function onClose() {
+        reject(CLOSE_MESSAGE)
+      }
+
+      connection.on('error', onError)
+      connection.on('timeout', onTimeout)
+      connection.on('close', onClose)
+
+      /**
+       * openScan
+       */
+
+      function openScan(callback) {
+        connection.client.scannerOpenWithScan(table, scan, null, callback)
+      }
+
+      /**
+       * closeScan
+       */
+
+      function closeScan(id) {
+        self.log.debug('close scan:', id)
+        connection.client.scannerClose(id, err => {
           if (err) {
-            reject(err)
-          } else {
-            resolve(res)
+            self.log.error('error closing scanner:', err)
           }
         })
-      })
-    }
+      }
 
-    /**
-     * closeScan
-     */
+      /**
+       * getResults
+       */
 
-    function closeScan(id) {
-      self.log.debug('close scan:', id)
-      connection.client.scannerClose(id, err => {
-        if (err) {
-          self.log.error('error closing scanner:', err)
-        }
-      })
-    }
-
-    /**
-     * getResults
-     */
-
-    function getResults(id) {
-      const batchSize = 1000
-      let page = 1
-      let max
-
-      return new Promise((resolve, reject) => {
+      function getResults(id) {
+        const batchSize = 1000
+        let page = 1
+        let max
 
         /**
          * recursiveGetResults
@@ -539,42 +596,53 @@ HbaseClient.prototype.getScan = function(options) {
               }
 
               closeScan(id)
-              resolve(results)
+              handleResponse(results)
             }
           })
         }
 
         // recursively get results
         recursiveGetResults()
-      })
-    }
+      }
 
-    return openScan()
-    .then(getResults)
+      /**
+       * handleResponse
+       */
+
+      function handleResponse(rows) {
+        self.pool.release(connection)
+        connection.removeListener('error', onError)
+        connection.removeListener('timeout', onTimeout)
+        connection.removeListener('close', onClose)
+
+        self.log.debug('scan:', table, 'rows:' + rows.length)
+        if (rows.length === limit &&
+           !options.excludeMarker) {
+          const marker = rows.pop().rowkey
+          resolve({
+            rows: rows,
+            marker: marker
+          })
+        } else {
+          resolve({
+            rows: rows
+          })
+        }
+      }
+
+      openScan((err, resp) => {
+        if (err) {
+          reject(err)
+        } else {
+          getResults(resp)
+        }
+      })
+    })
   }
 
   return self.pool.acquire()
   .then(connection => {
-
-    function handleResponse(rows) {
-      self.pool.release(connection)
-      self.log.debug('scan:', table, 'rows:' + rows.length)
-      if (rows.length === limit &&
-         !options.excludeMarker) {
-        const marker = rows.pop().rowkey
-        return {
-          rows: rows,
-          marker: marker
-        }
-      } else {
-        return {
-          rows: rows
-        }
-      }
-    }
-
     return getScan(connection)
-    .then(handleResponse)
   })
 }
 

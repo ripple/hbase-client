@@ -2,8 +2,28 @@ const mock = require('./mock.json')
 const assert = require('assert')
 const Hbase = require('../src/index.js')
 const hbase = new Hbase({
-  host: 'hbase',
-  port: 9090,
+  servers: [
+    {
+      host: 'hbase',
+      port: 9090
+    },
+    {
+      host: 'hbase',
+      port: 9090
+    },
+    {
+      host: 'hbase',
+      port: 9090
+    },
+    {
+      host: 'hbase',
+      port: 9090
+    },
+    {
+      host: 'hbase',
+      port: 9090
+    }
+  ],
   prefix: 'prefix',
   logLevel: 3,
   max_sockets: 1000
@@ -11,7 +31,7 @@ const hbase = new Hbase({
 
 describe('hbase client', function() {
 
-  it('should get table names', function() {
+  it('should get tables', function() {
     return hbase.getTables()
   })
 
@@ -79,6 +99,20 @@ describe('hbase client', function() {
     })
   })
 
+  it('should get a row by key with specific columns', function() {
+    return hbase.getRow({
+      table: mock.row.table,
+      rowkey: mock.row.rowkey,
+      columns: ['d:baz']
+    })
+    .then(row => {
+      assert.strictEqual(row.rowkey, mock.row.rowkey)
+      assert.deepEqual(row.columns, {
+        baz: mock.row.columns.baz
+      })
+    })
+  })
+
   it('should get a row by key with column families', function() {
     return hbase.getRow({
       table: mock.rowWithColumnFamilies.table,
@@ -88,6 +122,54 @@ describe('hbase client', function() {
     .then(row => {
       assert.strictEqual(row.rowkey, mock.rowWithColumnFamilies.rowkey)
       assert.deepEqual(row.columns, mock.rowWithColumnFamilies.columns)
+    })
+  })
+
+  it('should get multiple rows by key', function() {
+    return hbase.getRows({
+      table: mock.row.table,
+      rowkeys: [
+        'ROW|1',
+        'ROW|2',
+        'ROW|3',
+        'ROW|4'
+      ]
+    })
+    .then(rows => {
+      assert.strictEqual(rows.length, 4)
+    })
+  })
+
+  it('should get multiple rows by key with column families', function() {
+    return hbase.getRows({
+      table: mock.row.table,
+      rowkeys: [
+        'ROW|1',
+        'ROW|2',
+        'ROW|3',
+        'ROW|4'
+      ],
+      includeFamilies: true
+    })
+    .then(rows => {
+      assert.strictEqual(rows.length, 4)
+      assert.strictEqual(rows[3].columns['d:column5'], '5')
+    })
+  })
+
+  it('should get multiple rows by key with specific columns', function() {
+    return hbase.getRows({
+      table: mock.row.table,
+      rowkeys: [
+        'ROW|1',
+        'ROW|2',
+        'ROW|3',
+        'ROW|4'
+      ],
+      columns: ['d:foo']
+    })
+    .then(rows => {
+      assert.strictEqual(rows.length, 2)
     })
   })
 
