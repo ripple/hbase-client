@@ -62,7 +62,6 @@ function HbaseClient(options) {
    */
 
   function destroy(connection) {
-    console.log('destroy')
     connection.end()
   }
 
