@@ -271,42 +271,6 @@ HbaseClient.prototype.getScan = function(options) {
     scanOpts.stopRow = swap    
   }
   
-/*  
-  if (options.marker && options.descending === true) {
-    options.stopRow = options.marker
-  } else if (options.marker) {
-    options.startRow = options.marker
-  }
-
-  if (options.marker && options.descending === true) {
-    options.stopRow = options.marker
-  } else if (options.marker) {
-    options.startRow = options.marker
-  }
-
-  // invert stop and start index
-  if (options.descending === true) {
-    scanOpts.stopRow = options.stopRow.toString()
-    scanOpts.startRow = options.startRow.toString()
-    scanOpts.reversed = true
-    
-    if (scanOpts.startRow > scanOpts.stopRow) {
-      swap = scanOpts.startRow
-      scanOpts.startRow = scanOpts.stopRow
-      scanOpts.stopRow = swap
-    }    
-
-  } else {
-    scanOpts.startRow = options.stopRow.toString()
-    scanOpts.stopRow = options.startRow.toString()
-
-    if (scanOpts.startRow > scanOpts.stopRow) {
-      swap = scanOpts.startRow
-      scanOpts.startRow = scanOpts.stopRow
-      scanOpts.stopRow = swap
-    }
-  }
-  */
   
   
   return self.pool.acquire()
@@ -317,7 +281,6 @@ HbaseClient.prototype.getScan = function(options) {
       return handleResponse(resp)
     })
   })
-  
   
   function handleResponse(resp) {
     let filtered = resp.rows
@@ -341,7 +304,6 @@ HbaseClient.prototype.getScan = function(options) {
     }
   }
 }
-
 
 /**
  * deleteRow

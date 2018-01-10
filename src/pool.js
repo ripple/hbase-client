@@ -117,6 +117,10 @@ function HbaseClient(options) {
         columns: options.rows[key]
       }))
     })
+    
+    if (!rows.length) {
+      return Promise.resolve()
+    }
 
     return new Promise((resolve, reject) => {
       self.client.mput(options.table, rows, function(err, resp) {               

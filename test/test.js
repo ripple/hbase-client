@@ -437,4 +437,10 @@ describe('hbase client', function() {
     })   
   }) 
 
+  it('putRows should not error with an empty rowset', function() {
+    return hbase.putRows({
+      table: mock.rows.table,
+      rows: {}
+    })
+  })  
 })
