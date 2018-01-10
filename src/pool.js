@@ -1,88 +1,243 @@
 const thrift = require('thrift')
 const genericPool = require('generic-pool')
-const HBase = require('./gen/Hbase')
+const hbase = require('hbase-rpc-client')
 
 const CLOSE_MESSAGE = 'HBASE client connection closed'
 const TIMEOUT_MESSAGE = 'Hbase client timeout'
+
+function makePut(options) {
+  const put = new hbase.Put(options.rowkey)
+
+  Object.keys(options.columns).forEach(key => {
+    const parts = key.split(':')
+    const family = parts[1] ? parts[0] : 'd'
+    const qualifier = parts[1] ? parts[1] : parts[0]
+    
+    let value = options.columns[key]
+    
+    // stringify JSON and arrays and convert numbers to string
+    if (typeof value !== 'string') {
+      value = JSON.stringify(value)
+    }
+    
+    if (value) {
+      put.add(family, qualifier, value)
+    }
+  })
+  
+  return put
+}
+
+function HbaseClient(options) {
+  const self = this
+  
+  this.client = hbase({
+    zookeeperHosts: options.hosts,
+    zookeeperRoot: options.root,
+    zookeeperReconnectTimeout: options.timeout || 30000,
+    rpcTimeout: options.timeout || 30000,
+    callTimeout: options.timeout || 30000,
+    tcpNoDelay: true,
+    tcpKeepAlive: true
+  })
+  
+  this.getRow = (options) => {
+    const get = new hbase.Get(options.rowkey)
+
+    return new Promise((resolve, reject) => {
+      self.client.get(options.table, get, function(err, resp) {       
+        const row = {}
+        
+        if (err) {
+          return reject(err)
+        }
+            
+        if (!resp) {
+          return resolve(undefined)
+        }
+      
+        resolve({
+          row: resp.row,
+          columns: resp.cols
+        })
+      })      
+    })
+  }
+  
+  this.getRows = (options) => {
+    const gets = options.rowkeys.map(rowkey => {
+      return new hbase.Get(rowkey)
+    })
+
+    return new Promise((resolve, reject) => {
+      self.client.mget(options.table, gets, function(err, resp) {       
+        const rows = []
+        
+        if (err) {
+          return reject(err)
+        }
+      
+        resp.forEach(row => {
+          if (row.row) {
+            rows.push({
+              row: row.row,
+              columns: row.cols
+            })
+          }
+        })
+        
+        resolve(rows)
+      })      
+    })
+  }  
+  
+  this.putRow = (options) => {
+    const put = makePut({
+      rowkey: options.rowkey, 
+      columns: options.columns
+    })
+                                         
+    return new Promise((resolve, reject) => {
+      self.client.put(options.table, put, function(err, resp) {               
+        if (err) {
+          return reject(err)
+        }
+        
+        resolve()
+      })      
+    })
+  }  
+  
+  this.putRows = (options) => {
+    const rows = []
+    Object.keys(options.rows).forEach(key => {
+      
+      rows.push(makePut({
+        rowkey: key,
+        columns: options.rows[key]
+      }))
+    })
+
+    return new Promise((resolve, reject) => {
+      self.client.mput(options.table, rows, function(err, resp) {               
+        if (err) {
+          return reject(err)
+        }
+        
+        resolve()
+      })      
+    })
+  }  
+  
+  this.getScan = (options) => {
+    return new Promise((resolve, reject) => {
+      const scan = self.client.getScanner(options.table, 
+                                          options.startRow, 
+                                          options.stopRow)
+      if (options.reversed) {
+        scan.setReversed()
+        
+      }
+     /* 
+              scan.toArray((err, rows) => {
+          console.log(rows)
+          rows.forEach(row => {
+            console.log(row.row.toString())
+          })
+        })
+      
+      return
+      */
+      const rows = []
+      getNext()
+      
+      function getNext(getMarker) {
+        scan.next((err, row) => {           
+          if (err) {
+            return reject(err)
+          }
+
+          if (!row.row || getMarker) {
+            scan.close()
+            resolve({
+              rows: rows,
+              marker: row.row ? row.row.toString('utf8') : undefined
+            })
+            return
+          }        
+
+          rows.push({
+            row: row.row,
+            columns: row.cols
+          })
+          
+
+          if (rows.length === options.limit
+             && options.excludeMarker) {
+            scan.close()
+            resolve({
+              rows: rows
+            })  
+            
+          } else if (rows.length === options.limit) {
+            getNext(true)  
+            
+          } else {
+            getNext()
+          }
+        })
+      }
+    })
+  }
+  
+  this.delete = (options) => {
+    const del = new hbase.Delete(options.rowkey)
+    
+    if (options.columns) {
+      options.columns.forEach(c => {
+        const parts = c.split(':')
+        const family = parts[1] ? parts[0] : 'd'
+        const qualifier = parts[1] ? parts[1] : parts[0]      
+        del.deleteColumns(family, qualifier)
+      })
+    }
+
+    return new Promise((resolve, reject) => {
+      self.client.delete(options.table, del, function(err, resp) {               
+        if (err) {
+          return reject(err)
+        }
+        
+        resolve()
+      })      
+    })
+  }   
+}
 
 /**
  * HbaseClient
  * HBase client class
  */
 
-function HbaseClient(options) {
-  const servers = options.servers || []
-
-  if (!servers.length) {
-    servers.push({
-      host: options.host,
-      port: options.port
-    })
-  }
+function HbaseClientPool(options) {
 
   /**
    * create
    */
 
   function create() {
-    return new Promise(function(resolve, reject) {
-      const i = Math.floor(Math.random() * servers.length)
-      const server = servers[i]
-      const connection = thrift.createConnection(server.host, server.port, {
-        transport: thrift.TFramedTransport,
-        protocol: thrift.TBinaryProtocol,
-        timeout: options.timeout || 30000
-      })
-
-      connection.once('connect', () => {
-        connection.connection.setKeepAlive(true)
-        connection.client = thrift.createClient(HBase, connection)
-        resolve(connection)
-      })
-
-      connection.on('error', err => {
-        connection._ended = true
-        reject(err)
-      })
-
-      connection.on('close', () => {
-        connection._ended = true
-        reject(CLOSE_MESSAGE)
-      })
-
-      connection.on('timeout', () => {
-        connection._ended = true
-        reject(TIMEOUT_MESSAGE)
-      })
-    })
-  }
-
- /**
-   * destroy
-   */
-
-  function destroy(connection) {
-    connection.end()
-  }
-
-  /**
-   * validate
-   */
-
-  function validate(connection) {
-    return !connection._ended
+    return new HbaseClient(options)
   }
 
   const factory = {
     create: create,
-    destroy: destroy,
-    validate: validate
+    destroy: () => {}
   }
 
   const params = {
-    testOnBorrow: true,
-    max: options.max_connections || 1000,
-    min: options.min_connections || 5,
+    testOnBorrow: false,
+    max: options.max_sockets || 100,
+    min: options.min_sockets || 5,
     acquireTimeoutMillis: options.timeout || 30000,
     idleTimeoutMillis: options.timeout || 30000
   }
@@ -90,4 +245,4 @@ function HbaseClient(options) {
   return genericPool.createPool(factory, params)
 }
 
-module.exports = HbaseClient
+module.exports = HbaseClientPool

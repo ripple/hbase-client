@@ -1,12 +1,13 @@
 {
   "name": "ripple-hbase-client",
-  "version": "0.0.6",
+  "version": "0.1.0",
   "description": "ripple hbase client",
   "main": "src/index.js",
   "dependencies": {
     "bluebird": "^3.5.0",
     "colors": "^1.1.2",
     "generic-pool": "^3.1.7",
+    "hbase-rpc-client": "0.1.12",
     "moment": "^2.18.1",
     "thrift": "^0.10.0",
     "winston": "^2.3.1"
@@ -14,6 +15,7 @@
   "devDependencies": {
     "babel-eslint": "^7.2.1",
     "eslint": "2.9.0",
+    "hbase": "^0.3.0",
     "mocha": "^3.2.0"
   },
   "scripts": {
