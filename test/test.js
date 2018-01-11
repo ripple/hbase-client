@@ -321,7 +321,21 @@ describe('hbase client', function() {
       assert.strictEqual(resp.rows.length, 2)
       assert.strictEqual(resp.marker, undefined)
     })
-  })    
+  })   
+  
+  it('should get rows by scan with filters', function() {
+    return hbase.getScan({
+      table: 'test',
+      filters: [mock.filter1]
+    }).then(resp => {      
+      const column = mock.filter1.qualifier
+      const value = mock.filter1.value
+      
+      assert.strictEqual(resp.rows.length, 2)
+      assert.strictEqual(resp.rows[0].columns[column], value)
+      assert.strictEqual(resp.rows[1].columns[column], value)
+    })
+  })  
 
   it('should do a of scans, puts, and gets', function() {
     this.timeout(7000)

@@ -28,7 +28,7 @@
       },
       "ROW|4" : {
         "column5": 5,
-        "column6": "six"
+        "column6": "6"
       },
       "ROW|5" : {
         "column5": 5,
@@ -39,5 +39,11 @@
         "column6": "six"
       }      
     }
+  },
+  "filter1": {
+    "family": "d",
+    "qualifier": "column6",
+    "comparator": "=",
+    "value": "six"
   }
 }

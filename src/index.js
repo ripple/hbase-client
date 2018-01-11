@@ -242,7 +242,8 @@ HbaseClient.prototype.getScan = function(options) {
     table: table,
     limit: options.limit,
     excludeMarker: options.excludeMarker,
-    reversed: options.descending === true
+    reversed: options.descending === true,
+    filters: options.filters
   }
   
   let d = Date.now()

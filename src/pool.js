@@ -28,6 +28,33 @@ function makePut(options) {
   return put
 }
 
+
+function addFilters(scan, filters) {
+  const list = new hbase.FilterList()
+
+  filters.forEach(filter => {
+    const comp = filter.comparator === '=' ?
+      "EQUAL" : filter.comparator
+    
+    list.addFilter({
+      singleColumnValueFilter: {
+        columnFamily: filter.family,
+        columnQualifier: filter.qualifier,
+        compareOp: comp,
+        comparator: {
+          substringComparator: {
+            substr: filter.value
+          }
+        },
+        filterIfMissing: filter.latest === false ? false : true,
+        latestVersionOnly: filter.latest === false ? false : true
+      }
+    })       
+  }) 
+  
+  scan.setFilter(list)
+}
+
 function HbaseClient(options) {
   const self = this
   
@@ -142,16 +169,11 @@ function HbaseClient(options) {
         scan.setReversed()
         
       }
-     /* 
-              scan.toArray((err, rows) => {
-          console.log(rows)
-          rows.forEach(row => {
-            console.log(row.row.toString())
-          })
-        })
+     
+      if (options.filters) {
+        addFilters(scan, options.filters)
+      }
       
-      return
-      */
       const rows = []
       getNext()
       
