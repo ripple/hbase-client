@@ -3,47 +3,6 @@ const HbaseClientPool = require('./pool')
 const HBaseTypes = require('./gen/Hbase_types')
 const Logger = require('./logger')
 
-const CLOSE_MESSAGE = 'HBASE client connection closed'
-const TIMEOUT_MESSAGE = 'Hbase client timeout'
-
-
-function removeEmpty(connection, options) {  
-  let key
-  
-  if (!options.remove) {
-    return Promise.resolve()
-  }
-
-  const list = [] 
-  
-  Object.keys(options.rows).forEach(key => {
-    list.push(removeEmptyColumns(key, options.rows[key]))
-  })
-  
-  return Promise.all(list)
-  
-  
-  function removeEmptyColumns(rowkey, columns) {
-    const removed = []
-    
-    for (key in columns) {
-      if (!columns[key] && columns[key] !== 0) {
-        removed.push(key)
-      }
-    }
-    
-    if (!removed.length) {
-      return Promise.resolve()  
-    }
-    
-    return connection.delete({
-      table: options.table,
-      rowkey: rowkey,
-      columns: removed
-    })   
-  }
-}
-
 /**
  * formatRows
  */
@@ -91,6 +50,28 @@ function HbaseClient(options) {
   })
 }
 
+HbaseClient.prototype._query = function(options) {
+  const self = this
+  
+  return new Promise((resolve, reject) => {
+    self.pool.acquire()
+    .then(client => {
+
+      client.client.on('error', err => {
+        reject(Error('hbase client error: ' + err))
+      }) 
+
+      return client[options.name](options.params)
+      .then(resp => {
+        client.client.removeAllListeners()
+        self.pool.release(client)
+        return options.cb ? options.cb(resp) : undefined
+      })
+      .then(resolve)
+    }) 
+    .catch(reject)
+  })
+}
 
 /**
  * getRow
@@ -101,15 +82,13 @@ HbaseClient.prototype.getRow = function(options) {
   const prefix = options.prefix || self._prefix
   const table = prefix + options.table
 
-  return self.pool.acquire()
-  .then(connection => {
-    return connection.getRow({
+  return this._query({
+    name: 'getRow',
+    params: {
       table: table,
       rowkey: options.rowkey
-    }).then(resp => {
-      self.pool.release(connection)
-      return handleResponse(resp)
-    })
+    },
+    cb: handleResponse
   })
   
   function handleResponse(row) {
@@ -151,16 +130,14 @@ HbaseClient.prototype.getRows = function(options) {
     return filtered ? formatRows(filtered, options.includeFamilies) : []
   }
 
-  return self.pool.acquire()
-  .then(connection => {
-    return connection.getRows({
+  return this._query({
+    name: 'getRows',
+    params: {
       table: table,
       rowkeys: options.rowkeys
-    }).then(resp => {
-      self.pool.release(connection)
-      return handleResponse(resp)
-    })
-  })  
+    },
+    cb: handleResponse
+  })
 }
 
 /**
@@ -179,21 +156,13 @@ HbaseClient.prototype.putRows = function(options) {
   let columns
   let rowkey
 
-  return self.pool.acquire()
-  .then(connection => {
-    return removeEmpty(connection, {
+  return this._query({
+    name: 'putRows',
+    params: {
       table: table, 
       rows: options.rows, 
-      remove: options.removeEmptyColumns
-    })
-    .then(() => {
-      return connection.putRows({
-        table: table,
-        rows: options.rows
-      }).then(() => {
-        self.pool.release(connection)
-      })    
-    })
+      removeEmpty: options.removeEmptyColumns
+    }
   })
 }
 
@@ -213,24 +182,14 @@ HbaseClient.prototype.putRow = function(options) {
     return Promise.reject('missing required parameter: rowkey')
   }
   
-  return self.pool.acquire()
-  .then(connection => {
-    const rows = {}
-    rows[options.rowkey] = options.columns
-    return removeEmpty(connection, {
-      table: table, 
-      rows: rows, 
-      remove: options.removeEmptyColumns
-    })
-    .then(() => {
-      return connection.putRow({
-        table: table,
-        rowkey: options.rowkey,
-        columns: options.columns
-      }).then(() => {
-        self.pool.release(connection)
-      })  
-    })
+  return this._query({
+    name: 'putRow',
+    params: {
+      table: table,
+      rowkey: options.rowkey,
+      columns: options.columns,
+      removeEmpty: options.removeEmptyColumns
+    }
   })
 }
 
@@ -272,17 +231,6 @@ HbaseClient.prototype.getScan = function(options) {
     scanOpts.stopRow = swap    
   }
   
-  
-  
-  return self.pool.acquire()
-  .then(connection => {
-    return connection.getScan(scanOpts)
-    .then(resp => {
-      self.pool.release(connection)
-      return handleResponse(resp)
-    })
-  })
-  
   function handleResponse(resp) {
     let filtered = resp.rows
     if (options.columns) {
@@ -304,6 +252,12 @@ HbaseClient.prototype.getScan = function(options) {
       marker: resp.marker
     }
   }
+  
+  return this._query({
+    name: 'getScan',
+    params: scanOpts,
+    cb: handleResponse
+  })  
 }
 
 /**
@@ -322,16 +276,13 @@ HbaseClient.prototype.deleteRow = function(options) {
     return Promise.reject('missing required parameter: rowkey')
   }
 
-  return self.pool.acquire()
-  .then(connection => {
-    return connection.delete({
+  return this._query({
+    name: 'delete',
+    params: {
       table: table,
       rowkey: options.rowkey
-    })
-    .then(resp => {
-      self.pool.release(connection)
-    })
-  }) 
+    }
+  })
 }
 
 /**
@@ -380,17 +331,15 @@ HbaseClient.prototype.deleteColumns = function(options) {
     return Promise.reject('missing required parameter: rowkey')
   }
   
-  return self.pool.acquire()
-  .then(connection => {
-    return connection.delete({
+  
+  return this._query({
+    name: 'delete',
+    params: {
       table: table,
       rowkey: options.rowkey,
       columns: options.columns
-    })
-    .then(resp => {
-      self.pool.release(connection)
-    })
-  }) 
+    }
+  })
 }
 
 /**
@@ -408,17 +357,14 @@ HbaseClient.prototype.deleteColumn = function(options) {
     return Promise.reject('missing required parameter: rowkey')
   }
   
-  return self.pool.acquire()
-  .then(connection => {
-    return connection.delete({
+  return this._query({
+    name: 'delete',
+    params: {
       table: table,
       rowkey: options.rowkey,
       columns: [options.column]
-    })
-    .then(resp => {
-      self.pool.release(connection)
-    })
-  })  
+    }
+  })
 }
 
 module.exports = HbaseClient

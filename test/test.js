@@ -8,11 +8,64 @@ const hbase = new Hbase({
   hosts: ['hbase'],
   root: '/hbase',
   prefix: 'prefix',
-  logLevel: 3
+  logLevel: 3,
+  max_sockets: 100,
+  timeout: 5000
 })
 
 describe('hbase client', function() {
 
+  it('should handle client error', function() {    
+    const hb = new Hbase({
+      hosts: ['hbase'],
+      root: '/hbase',
+      prefix: 'prefix',
+      logLevel: 3,
+      min_sockets: 1,
+      timeout: 1
+    })
+    
+    return hb.getRow({
+      table: mock.row.table,
+      rowkey: mock.row.rowkey
+    }) 
+    .then(console.log)
+    .catch(err => {
+      assert.strictEqual(err.toString(), 'Error: hbase client error:' + 
+                         ' Failed to connect to zookeeper. zkHosts: ' + 
+                         '[hbase] zkRoot: \'/hbase\'')
+    })
+  })
+  
+  it('should handle resource timeout error', function() {    
+    const hb = new Hbase({
+      hosts: ['hbase'],
+      root: '/hbase',
+      prefix: 'prefix',
+      logLevel: 3,
+      min_sockets: 1,
+      max_sockets: 1,
+      timeout: 100
+    })
+    
+    let i = 30
+    const list = []
+    while (i--) {
+      list.push(hb.getScan({
+        table: 'test',
+        startRow: 'A',
+        stopRow: 'Z',
+        descending: true
+      }))
+    }
+
+    return Promise.all(list)
+    .then(assert)
+    .catch(err => {
+      assert.strictEqual(err.toString(), 'TimeoutError: ResourceRequest timed out')
+    })
+  })  
+  
   it('should delete existing table', function(done) {
     this.timeout(5000)
     
@@ -124,17 +177,22 @@ describe('hbase client', function() {
   
   
   it('should get multiple rows by key', function() {
+    const rowkeys = [
+      'ROW|1',
+      'ROW|2',
+      'ROW|3',
+      'ROW|4'
+    ]
+    
     return hbase.getRows({
       table: mock.row.table,
-      rowkeys: [
-        'ROW|1',
-        'ROW|2',
-        'ROW|3',
-        'ROW|4'
-      ]
+      rowkeys: rowkeys
     })
     .then(rows => {
       assert.strictEqual(rows.length, 4)
+      rowkeys.forEach((key,i) => {
+        assert.strictEqual(rows[i].rowkey, key)
+      })
     })
   })
 
@@ -456,5 +514,5 @@ describe('hbase client', function() {
       table: mock.rows.table,
       rows: {}
     })
-  })  
+  })     
 })
