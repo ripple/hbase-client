@@ -394,6 +394,15 @@ describe('hbase client', function() {
       assert.strictEqual(resp.rows[1].columns[column], value)
     })
   })  
+  
+  it('should ignore an empty filter array', function() {
+    return hbase.getScan({
+      table: 'test',
+      filters: []
+    }).then(resp => {   
+      assert.strictEqual(resp.rows.length, 6)
+    })
+  })    
 
   it('should do a of scans, puts, and gets', function() {
     this.timeout(7000)

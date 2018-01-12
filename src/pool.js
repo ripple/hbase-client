@@ -30,6 +30,11 @@ function makePut(options) {
 
 
 function addFilters(scan, filters) {
+  
+  if (!filters.length) {
+    return  
+  }
+  
   const list = new hbase.FilterList()
 
   filters.forEach(filter => {
