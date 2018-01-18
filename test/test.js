@@ -9,12 +9,36 @@ const hbase = new Hbase({
   root: '/hbase',
   prefix: 'prefix',
   logLevel: 3,
-  max_sockets: 100,
+  max_sockets: 10,
+  min_sockets: 10,
   timeout: 5000
 })
 
 describe('hbase client', function() {
 
+  before(function(done) {
+    this.timeout(5000)
+    
+    const rest = HbaseRest({ host: 'hbase', port: 8080 })
+    
+    rest.table('prefixtest').delete((err) => {
+      if (err && err.code !== 404) {
+        assert.ifError(err)
+      }
+      
+      rest.table('prefixtest').create({
+        ColumnSchema: [
+          { name: 'f'},
+          { name: 'd'}
+        ]
+      }, (err, resp) => {
+        assert.ifError(err)
+        done()       
+      })
+    })
+  })
+
+  
   it('should handle client error', function() {    
     const hb = new Hbase({
       hosts: ['hbase'],
@@ -29,10 +53,9 @@ describe('hbase client', function() {
       table: mock.row.table,
       rowkey: mock.row.rowkey
     }) 
-    .then(console.log)
+    .then(assert)
     .catch(err => {
-      assert.strictEqual(err.toString(), 'Error: hbase client error:' + 
-                         ' Failed to connect to zookeeper. zkHosts: ' + 
+      assert.strictEqual(err.toString(), 'Failed to connect to zookeeper. zkHosts: ' + 
                          '[hbase] zkRoot: \'/hbase\'')
     })
   })
@@ -43,8 +66,8 @@ describe('hbase client', function() {
       root: '/hbase',
       prefix: 'prefix',
       logLevel: 3,
-      min_sockets: 1,
-      max_sockets: 1,
+      min_sockets: 10,
+      max_sockets: 10,
       timeout: 100
     })
     
@@ -65,33 +88,6 @@ describe('hbase client', function() {
       assert.strictEqual(err.toString(), 'TimeoutError: ResourceRequest timed out')
     })
   })  
-  
-  it('should delete existing table', function(done) {
-    this.timeout(5000)
-    
-    const rest = HbaseRest({ host: 'hbase', port: 8080 })
-    
-    rest.table('prefixtest').delete((err) => {
-        assert.ifError(err)
-        done()
-    })
-  })
-  
-  it('should create a table', function(done) {
-    this.timeout(5000)
-    
-    const rest = HbaseRest({ host: 'hbase', port: 8080 })
-    
-    rest.table('prefixtest').create({
-        ColumnSchema: [
-          { name: 'f'},
-          { name: 'd'}
-        ]
-      }, (err, resp) => {
-        assert.ifError(err)
-        done()
-    })
-  })
 
   it('should save a single row', function() {
     return hbase.putRow(mock.row)
@@ -120,22 +116,36 @@ describe('hbase client', function() {
     })
   })
 
-  it('should save a multiple rows', function() {
+  it('should save multiple rows', function() {
+    const keys = Object.keys(mock.rows.rows)
+    let attempts = 0
+    
     return hbase.putRows(mock.rows)
-    .then(() => {
+    .then(count => {
+      assert.strictEqual(count, keys.length)
+      return getRows()
+    })
+  
+    function getRows() {
       return hbase.getRows({
         table: mock.rows.table,
-        rowkeys: Object.keys(mock.rows.rows)
+        rowkeys: keys
       })
       .then(rows => {
-        assert.strictEqual(rows.length, 4)
+        assert(attempts++ < 100, 'too many attempts')
+        
+        if (rows[0].rowkey !== 'ROW|3') {
+          return getRows()   
+        }
+        
+        assert.strictEqual(rows.length, keys.length)
         assert.strictEqual(rows[0].columns.column0, mock.rows.rows['ROW|3'].column0.toString())
         assert.strictEqual(rows[0].columns.column1, mock.rows.rows['ROW|3'].column1.toString())
         assert.strictEqual(rows[0].columns.column2, mock.rows.rows['ROW|3'].column2)
         assert.strictEqual(rows[0].columns['columnJSON'], 
                            JSON.stringify(mock.rows.rows['ROW|3'].columnJSON))
-      })
-    })
+      })      
+    }
   })
 
   it('should get a row by key', function() {
@@ -339,6 +349,17 @@ describe('hbase client', function() {
       assert.strictEqual(resp.rows.length, 2)
       assert.strictEqual(resp.rows[0].rowkey, 'ROW|6')
       assert.strictEqual(resp.marker, 'ROW|4')
+      
+      return hbase.getScan({
+        table: 'test',
+        descending: true,
+        limit: 2,
+        marker: 'ROW|4'
+      }).then(resp => {
+        assert.strictEqual(resp.rows.length, 2)
+        assert.strictEqual(resp.rows[0].rowkey, 'ROW|4')
+        assert.strictEqual(resp.marker, 'ROW|2')
+      })      
     })
   })  
   
@@ -360,11 +381,37 @@ describe('hbase client', function() {
       descending: true,
       startRow: 'ROW|1',
       stopRow: 'ROW|5',
-      limit: 2,
+      limit: 1,
     }).then(resp => {
-      assert.strictEqual(resp.rows.length, 2)
+      assert.strictEqual(resp.rows.length, 1)
       assert.strictEqual(resp.rows[0].rowkey, 'ROW|5')
-      assert.strictEqual(resp.marker, 'ROW|3')
+      assert.strictEqual(resp.marker, 'ROW|4')
+      
+      return hbase.getScan({
+        table: 'test',
+        descending: true,
+        startRow: 'ROW|1',
+        stopRow: 'ROW|5',
+        marker: 'ROW|4',
+        limit: 1,
+      }).then(resp => {
+        assert.strictEqual(resp.rows.length, 1)
+        assert.strictEqual(resp.rows[0].rowkey, 'ROW|4')
+        assert.strictEqual(resp.marker, 'ROW|3')    
+      })
+  
+        return hbase.getScan({
+          table: 'test',
+          descending: true,
+          startRow: 'ROW|1',
+          stopRow: 'ROW|5',
+          marker: 'ROW|3',
+          limit: 1,
+        }).then(resp => {
+          assert.strictEqual(resp.rows.length, 1)
+          assert.strictEqual(resp.rows[0].rowkey, 'ROW|3')
+          assert.strictEqual(resp.marker, 'ROW|2')    
+        })      
     })
   }) 
   
@@ -393,7 +440,47 @@ describe('hbase client', function() {
       assert.strictEqual(resp.rows[0].columns[column], value)
       assert.strictEqual(resp.rows[1].columns[column], value)
     })
-  })  
+  })
+  
+  it.skip('should get rows by scan with family filter', function() {
+    return hbase.getScan({
+      table: 'test',
+      filters: [mock.filter2]
+    })
+  }) 
+  
+  it('should get rows by scan with FirstKeyOnlyFilter and KeyOnlyFilter', function() {
+    return hbase.getScan({
+      table: 'test',
+      filters: [
+        {type: 'FirstKeyOnlyFilter'},
+        {type: 'KeyOnlyFilter'}
+      ]
+    }).then(resp => {  
+      assert.strictEqual(resp.rows.length, 6)
+      resp.rows.forEach(row => {
+        const keys = Object.keys(row.columns) 
+        assert.strictEqual(keys.length, 1)
+        assert.strictEqual(row.columns[keys[0]], '')
+      })
+    })
+  }) 
+  
+  it('should get rows by scan with DependentColumnFilter', function() {
+    return hbase.getScan({
+      table: 'test',
+      filters: [{
+        type: 'DependentColumnFilter',
+        family: 'd',
+        qualifier: 'column5'
+      }]
+    }).then(resp => {  
+      assert.strictEqual(resp.rows.length, 3)
+      resp.rows.forEach(row => {
+        assert.strictEqual(Boolean(row.columns.column5), true)
+      })
+    })
+  })   
   
   it('should ignore an empty filter array', function() {
     return hbase.getScan({
@@ -404,7 +491,7 @@ describe('hbase client', function() {
     })
   })    
 
-  it('should do a of scans, puts, and gets', function() {
+  it('should do a bunch of scans, puts, and gets', function() {
     this.timeout(7000)
     let i = 300
     const list = []
@@ -504,7 +591,8 @@ describe('hbase client', function() {
     mock.rows.rows['ROW|4'].column6 = ''
  
     return hbase.putRows(mock.rows)
-    .then(() => {
+    .then(count => {
+      assert.strictEqual(count, Object.keys(mock.rows.rows).length)
       return hbase.getRows({
         table: mock.rows.table,
         rowkeys: ['ROW|3', 'ROW|4']
@@ -518,10 +606,34 @@ describe('hbase client', function() {
     })   
   }) 
 
+  it('getRows should not error with an empty rowset', function() {
+    return hbase.getRows({
+      table: mock.rows.table,
+      rowkeys: []
+    })
+    .then(rows => {
+      assert.strictEqual(rows.length, 0)
+    })
+  }) 
+  
   it('putRows should not error with an empty rowset', function() {
     return hbase.putRows({
       table: mock.rows.table,
       rows: {}
     })
-  })     
+    .then(count => {
+      assert.strictEqual(count, 0)
+    })
+  })  
+  
+  it('putRows should not error with an prefix only', function() {
+    return hbase.putRows({
+      prefix: 'prefixtest',
+      table: '',
+      rows: {}
+    })
+    .then(count => {
+      assert.strictEqual(count, 0)
+    })
+  })    
 })

@@ -1,10 +1,12 @@
-webapp:
-  build: .
-  volumes:
-    - .:/usr/src/app
-  ports:
-    - "7111:7111"
-  links:
-    - hbase
-hbase:
-  image: bwilsonripple/hbase
+version: "2"
+services: 
+  webapp:
+    build: .
+    volumes:
+      - .:/usr/src/app
+    ports:
+      - "7111:7111"
+    depends_on:
+      - hbase
+  hbase:
+    image: bwilsonripple/hbase

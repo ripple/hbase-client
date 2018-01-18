@@ -45,5 +45,10 @@
     "qualifier": "column6",
     "comparator": "=",
     "value": "six"
+  },
+  "filter2": {
+    "type": "FamilyFilter",
+    "family": "f"
   }
+  
 }
