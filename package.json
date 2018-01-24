@@ -4,12 +4,9 @@
   "description": "ripple hbase client",
   "main": "src/index.js",
   "dependencies": {
-    "bluebird": "^3.5.0",
     "colors": "^1.1.2",
     "generic-pool": "^3.1.7",
-    "hbase-rpc-client": "0.1.12",
-    "moment": "^2.18.1",
-    "thrift": "^0.10.0",
+    "hbase-rpc-client": "0.1.14",
     "winston": "^2.3.1"
   },
   "devDependencies": {

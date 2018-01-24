@@ -44,7 +44,6 @@ describe('hbase client', function() {
       hosts: ['hbase'],
       root: '/hbase',
       prefix: 'prefix',
-      logLevel: 3,
       min_sockets: 1,
       timeout: 1
     })
@@ -65,7 +64,6 @@ describe('hbase client', function() {
       hosts: ['hbase'],
       root: '/hbase',
       prefix: 'prefix',
-      logLevel: 3,
       min_sockets: 10,
       max_sockets: 10,
       timeout: 100
@@ -89,7 +87,7 @@ describe('hbase client', function() {
     })
   })
 
-  it('should save a single row', function() {
+ it('should save a single row', function() {
     return hbase.putRow(mock.row)
     .then(() => {
       return hbase.getRow({
@@ -236,6 +234,11 @@ describe('hbase client', function() {
     })
     .then(rows => {
       assert.strictEqual(rows.length, 2)
+      rows.forEach(row => {
+        assert.deepEqual(row.columns, {
+          foo: 'bar'
+        })
+      })
     })
   })
 
@@ -487,6 +490,33 @@ describe('hbase client', function() {
     })
   })
 
+  it('should get rows by scan with specific column', function() {
+    return hbase.getScan({
+      table: mock.row.table,
+      columns: ['foo']
+    })
+    .then(resp => {
+      assert.strictEqual(resp.rows.length, 2)
+      resp.rows.forEach(row => {
+        assert.deepEqual(row.columns, {
+          foo: 'bar'
+        })
+      })
+    })
+  })
+
+  it('should get rows by scan with specific columns', function() {
+    return hbase.getScan({
+      table: mock.row.table,
+      columns: ['foo','bar']
+    })
+    .then(resp => {
+      assert.strictEqual(resp.rows.length, 2)
+      assert.deepEqual(resp.rows[0].columns, {bar: 'baz', foo: 'bar'})
+      assert.deepEqual(resp.rows[1].columns, {foo: 'bar'})
+    })
+  })
+
   it('should ignore an empty filter array', function() {
     return hbase.getScan({
       table: 'test',
@@ -541,8 +571,6 @@ describe('hbase client', function() {
   })
 
   it('should delete columns', function() {
-
-
     return hbase.deleteColumns({
       table: 'test',
       rowkey: mock.rowWithColumnFamilies.rowkey,
@@ -552,6 +580,23 @@ describe('hbase client', function() {
       return hbase.getRow({
         table: 'test',
         rowkey: mock.rowWithColumnFamilies.rowkey
+      })
+      .then(row => {
+        assert.strictEqual(row, undefined)
+      })
+    })
+  })
+
+  it('should delete columns without families specified', function() {
+    return hbase.deleteColumns({
+      table: 'test',
+      rowkey: mock.row.rowkey,
+      columns: Object.keys(mock.row.columns)
+    })
+    .then(() => {
+      return hbase.getRow({
+        table: 'test',
+        rowkey: mock.row.rowkey
       })
       .then(row => {
         assert.strictEqual(row, undefined)
@@ -574,18 +619,22 @@ describe('hbase client', function() {
   })
 
   it('should save a single row while removing empty columns', function() {
-    mock.row.removeEmptyColumns = true
-    mock.row.columns.foo = ''
+    mock.rows.rows['ROW|5'].column6 = ''
 
-    return hbase.putRow(mock.row)
+    return hbase.putRow({
+      table: mock.rows.table,
+      rowkey: 'ROW|5',
+      columns: mock.rows.rows['ROW|5'],
+      removeEmptyColumns: true
+    })
     .then(() => {
       return hbase.getRow({
-        table: mock.row.table,
-        rowkey: mock.row.rowkey
+        table: mock.rows.table,
+        rowkey: 'ROW|5'
       })
       .then(row => {
-        assert.strictEqual(row.columns.foo, undefined)
-        assert.strictEqual(row.columns.baz, 'foo')
+        assert.strictEqual(row.columns.column6, undefined)
+        assert.strictEqual(row.columns.column5, '5')
       })
     })
   })
@@ -642,3 +691,4 @@ describe('hbase client', function() {
     })
   })
 })
+

@@ -3,20 +3,20 @@ const hbase = require('hbase-rpc-client')
 const genericPool = require('generic-pool')
 const TIMEOUT_MESSAGE = 'HBase client timeout'
 
-function addFilters(scan, filters) {
+function addFilters(scan, filters, pass) {
 
   if (!filters.length) {
     return
   }
 
-  const list = new hbase.FilterList()
+  const list = new hbase.FilterList(pass)
 
   filters.forEach(filter => {
     const comp = filter.comparator === '=' ?
       'EQUAL' : (filter.comparator || 'EQUAL')
 
     if (filter.type === 'FamilyFilter') {
-/*
+
       list.addFilter({
         familyFilter: {
           compareFilter: {
@@ -29,7 +29,7 @@ function addFilters(scan, filters) {
           }
         }
       })
-*/
+
     } else if (filter.type === 'FirstKeyOnlyFilter') {
       list.addFilter({
         firstKeyOnlyFilter: {}
@@ -50,6 +50,21 @@ function addFilters(scan, filters) {
           },
           columnFamily: filter.family,
           columnQualifier: filter.qualifier
+        }
+      })
+
+    } else if (filter.type === 'QualifierFilter') {
+
+      list.addFilter({
+        QualifierFilter: {
+          compareFilter: {
+            compareOp: 'EQUAL',
+            comparator: {
+              SubstringComparator: {
+                substr: filter.qualifier
+              }
+            }
+          }
         }
       })
 
@@ -414,6 +429,7 @@ HbaseClient.prototype.getScan = function(options) {
   }
 
   let swap
+  let pass
 
   scanOpts.startRow = options.startRow ?
     options.startRow.toString() : undefined
@@ -438,23 +454,8 @@ HbaseClient.prototype.getScan = function(options) {
   }
 
   function handleResponse(resp) {
-    let filtered = resp.rows
-    if (options.columns) {
-      resp.rows.forEach(row => {
-        Object.keys(row.columns).forEach(c => {
-          if (!options.columns.includes(c)) {
-            delete row.columns[c]
-          }
-        })
-      })
-
-      filtered = resp.rows.filter(d => {
-        return Boolean(Object.keys(d.columns).length)
-      })
-    }
-
     return {
-      rows: filtered ? formatRows(filtered, options.includeFamilies) : [],
+      rows: resp.rows ? formatRows(resp.rows, options.includeFamilies) : [],
       marker: resp.marker
     }
   }
@@ -490,8 +491,25 @@ HbaseClient.prototype.getScan = function(options) {
 
       }
 
+      if (options.columns) {
+        if (!options.filters) {
+          options.filters = []
+        }
+
+        pass = 'MUST_PASS_ONE'
+        options.columns.forEach(d => {
+          const parts = d.split(':')
+          const column = parts[1] || parts[0]
+
+          options.filters.push({
+            type: 'QualifierFilter',
+            qualifier: column
+          })
+        })
+      }
+
       if (options.filters) {
-        addFilters(scan, options.filters)
+        addFilters(scan, options.filters, pass)
       }
 
       const rows = []
