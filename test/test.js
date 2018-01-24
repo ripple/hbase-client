@@ -77,7 +77,7 @@ describe('hbase client', function() {
     })
   })
 
-  it('should save a single row', function() {
+ it('should save a single row', function() {
     return hbase.putRow(mock.row)
     .then(() => {
       return hbase.getRow({
@@ -480,7 +480,7 @@ describe('hbase client', function() {
     })
   })
 
-  it('should get rows by scan with specific columns', function() {
+  it('should get rows by scan with specific column', function() {
     return hbase.getScan({
       table: mock.row.table,
       columns: ['d:foo']
@@ -492,6 +492,18 @@ describe('hbase client', function() {
           foo: 'bar'
         })
       })
+    })
+  })
+
+  it('should get rows by scan with specific columns', function() {
+    return hbase.getScan({
+      table: mock.row.table,
+      columns: ['d:foo','d:bar']
+    })
+    .then(resp => {
+      assert.strictEqual(resp.rows.length, 2)
+      assert.deepEqual(resp.rows[0].columns, {bar: 'baz', foo: 'bar'})
+      assert.deepEqual(resp.rows[1].columns, {foo: 'bar'})
     })
   })
 

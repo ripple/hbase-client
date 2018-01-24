@@ -4,7 +4,8 @@
     "rowkey": "ROW|1",
     "columns": {
       "foo": "bar",
-      "baz": "foo"
+      "baz": "foo",
+      "bar": "baz"
     }
   },
   "rowWithColumnFamilies": {
@@ -33,11 +34,11 @@
       "ROW|5" : {
         "column5": 5,
         "column6": "six"
-      }, 
+      },
       "ROW|6" : {
         "column5": 5,
         "column6": "six"
-      }      
+      }
     }
   },
   "filter1": {
@@ -50,5 +51,5 @@
     "type": "FamilyFilter",
     "family": "f"
   }
-  
+
 }
