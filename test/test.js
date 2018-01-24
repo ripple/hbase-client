@@ -224,6 +224,11 @@ describe('hbase client', function() {
     })
     .then(rows => {
       assert.strictEqual(rows.length, 2)
+      rows.forEach(row => {
+        assert.deepEqual(row.columns, {
+          foo: 'bar'
+        })
+      })
     })
   })
 
@@ -471,6 +476,21 @@ describe('hbase client', function() {
       assert.strictEqual(resp.rows.length, 3)
       resp.rows.forEach(row => {
         assert.strictEqual(Boolean(row.columns.column5), true)
+      })
+    })
+  })
+
+  it('should get rows by scan with specific columns', function() {
+    return hbase.getScan({
+      table: mock.row.table,
+      columns: ['d:foo']
+    })
+    .then(resp => {
+      assert.strictEqual(resp.rows.length, 2)
+      resp.rows.forEach(row => {
+        assert.deepEqual(row.columns, {
+          foo: 'bar'
+        })
       })
     })
   })

@@ -459,6 +459,10 @@ HbaseClient.prototype.getScan = function(options) {
     scanOpts.stopRow = swap
   }
 
+  if (options.columns) {
+    scanOpts.columns = options.columns
+  }
+
   if (options.marker) {
     scanOpts.startRow = options.marker.toString()
   }
