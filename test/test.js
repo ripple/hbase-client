@@ -493,7 +493,7 @@ describe('hbase client', function() {
   it('should get rows by scan with specific column', function() {
     return hbase.getScan({
       table: mock.row.table,
-      columns: ['foo']
+      columns: ['d:foo']
     })
     .then(resp => {
       assert.strictEqual(resp.rows.length, 2)
@@ -508,7 +508,7 @@ describe('hbase client', function() {
   it('should get rows by scan with specific columns', function() {
     return hbase.getScan({
       table: mock.row.table,
-      columns: ['foo','bar']
+      columns: ['d:foo','d:bar']
     })
     .then(resp => {
       assert.strictEqual(resp.rows.length, 2)

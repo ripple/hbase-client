@@ -429,7 +429,6 @@ HbaseClient.prototype.getScan = function(options) {
   }
 
   let swap
-  let pass
 
   scanOpts.startRow = options.startRow ?
     options.startRow.toString() : undefined
@@ -454,8 +453,23 @@ HbaseClient.prototype.getScan = function(options) {
   }
 
   function handleResponse(resp) {
+    let filtered = resp.rows
+    if (options.columns) {
+      resp.rows.forEach(row => {
+        Object.keys(row.columns).forEach(c => {
+          if (!options.columns.includes(c)) {
+            delete row.columns[c]
+          }
+        })
+      })
+
+      filtered = resp.rows.filter(d => {
+        return Boolean(Object.keys(d.columns).length)
+      })
+    }
+
     return {
-      rows: resp.rows ? formatRows(resp.rows, options.includeFamilies) : [],
+      rows: filtered ? formatRows(filtered, options.includeFamilies) : [],
       marker: resp.marker
     }
   }
@@ -491,25 +505,8 @@ HbaseClient.prototype.getScan = function(options) {
 
       }
 
-      if (options.columns) {
-        if (!options.filters) {
-          options.filters = []
-        }
-
-        pass = 'MUST_PASS_ONE'
-        options.columns.forEach(d => {
-          const parts = d.split(':')
-          const column = parts[1] || parts[0]
-
-          options.filters.push({
-            type: 'QualifierFilter',
-            qualifier: column
-          })
-        })
-      }
-
       if (options.filters) {
-        addFilters(scan, options.filters, pass)
+        addFilters(scan, options.filters)
       }
 
       const rows = []
@@ -529,11 +526,20 @@ HbaseClient.prototype.getScan = function(options) {
             return
           }
 
-          rows.push({
-            row: row.row,
-            columns: row.cols
-          })
+          if (options.columns) {
+            Object.keys(row.cols).forEach(c => {
+              if (!options.columns.includes(c)) {
+                delete row.cols[c]
+              }
+            })
+          }
 
+          if (Boolean(Object.keys(row.cols).length)) {
+            rows.push({
+              row: row.row,
+              columns: row.cols
+            })
+          }
 
           if (rows.length === limit
              && options.excludeMarker) {
