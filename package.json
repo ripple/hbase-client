@@ -1,13 +1,12 @@
 {
   "name": "ripple-hbase-client",
-  "version": "0.1.6",
+  "version": "0.1.6-thrift",
   "description": "ripple hbase client",
   "main": "src/index.js",
   "dependencies": {
     "bluebird": "^3.5.0",
     "colors": "^1.1.2",
     "generic-pool": "^3.1.7",
-    "hbase-rpc-client": "0.1.12",
     "moment": "^2.18.1",
     "thrift": "^0.10.0",
     "winston": "^2.3.1"
