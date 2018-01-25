@@ -190,9 +190,7 @@ function HbaseClient(options) {
         })
       })
     },
-    destroy: client => {
-      console.log('destroy')
-    }
+    destroy: client => {}
   }
 
   const params = {
