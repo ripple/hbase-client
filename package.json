@@ -1,6 +1,6 @@
 {
   "name": "ripple-hbase-client",
-  "version": "0.1.7-thrift",
+  "version": "0.1.8-thrift",
   "description": "ripple hbase client",
   "main": "src/index.js",
   "dependencies": {
