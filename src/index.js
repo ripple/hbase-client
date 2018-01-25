@@ -153,6 +153,7 @@ function formatRows(data, includeFamilies) {
  */
 
 function HbaseClient(options) {
+  const self = this
   this._prefix = options.prefix || ''
   this.logStats = (options.logLevel && options.logLevel > 3) ? true : false
 
@@ -162,9 +163,11 @@ function HbaseClient(options) {
     file: options.logFile
   })
 
+  let swap
+
   const factory = {
     create: function() {
-      return new hbase({
+      const client = hbase({
         zookeeperHosts: options.hosts,
         zookeeperRoot: options.root,
         zookeeperReconnectTimeout: (options.timeout || 30000) * 1.1,
@@ -173,10 +176,22 @@ function HbaseClient(options) {
         tcpNoDelay: true,
         tcpKeepAlive: true
       })
+
+      client.on('timeout', function() {
+        if (client.reject) {
+          client.reject(TIMEOUT_MESSAGE)
+        }
+      })
+
+      client.on('error', function(err) {
+        if (client.reject) {
+          client.reject(err)
+        }
+      })
+
+      return client
     },
-    destroy: client => {
-      console.log('destroy')
-    }
+    destroy: client => {}
   }
 
   const params = {
@@ -193,14 +208,13 @@ function HbaseClient(options) {
 HbaseClient.prototype.acquire = function(reject) {
   return this.pool.acquire()
   .then(client => {
-    client.on('error', reject)
-    client.on('timeout', reject.bind(this, 'HBase connection timeout'))
+    client.reject = reject
     return client
   })
 }
 
 HbaseClient.prototype.release = function(client) {
-  client.removeAllListeners()
+  delete client.reject
   this.pool.release(client)
 }
 
@@ -484,22 +498,22 @@ HbaseClient.prototype.getScan = function(options) {
         scan.close()
         self.release(client)
 
-        d = ((Date.now() - d)/1000) + 's'
-        self.log.info('query:getScan',
-                      'table:' + table,
-                      'time:' + d,
-                      'rowcount:' + data.rows.length)
-
         if (err) {
           reject(err)
         } else {
+
+          d = ((Date.now() - d)/1000) + 's'
+          self.log.info('query:getScan',
+            'table:' + table,
+            'time:' + d,
+            'rowcount:' + (data ? data.rows.length : null))
           resolve(data)
         }
       }
 
       const scan = client.getScanner(table,
-                                          scanOpts.startRow,
-                                          scanOpts.stopRow)
+                                     scanOpts.startRow,
+                                     scanOpts.stopRow)
       if (scanOpts.reversed) {
         scan.setReversed()
 

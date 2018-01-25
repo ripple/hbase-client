@@ -9,8 +9,8 @@ const hbase = new Hbase({
   root: '/hbase',
   prefix: 'prefix',
   logLevel: 2,
-  max_sockets: 5,
-  min_sockets: 5,
+  max_sockets: 50,
+  min_sockets: 2,
   timeout: 10000
 })
 
