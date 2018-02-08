@@ -518,7 +518,7 @@ describe('hbase client', function() {
 
   it('should do a bunch of scans, puts, and gets', function() {
     this.timeout(7000)
-    let i = 400
+    let i = 300
     const list = []
     while (i--) {
 

@@ -165,6 +165,10 @@ function HbaseClient(options) {
         const i = Math.floor(Math.random() * servers.length)
         const server = servers[i]
 
+        const timeout = setTimeout(() => {
+          reject()
+        }, options.timeout || 30000)
+
         const connection = thrift.createConnection(server.host, server.port, {
           transport: thrift.TFramedTransport,
           protocol: thrift.TBinaryProtocol,
@@ -172,6 +176,7 @@ function HbaseClient(options) {
         })
 
         connection.once('connect', () => {
+          clearTimeout(timeout)
           connection.connection.setKeepAlive(true)
           connection.client = thrift.createClient(HBase, connection)
           resolve(connection)
@@ -182,11 +187,11 @@ function HbaseClient(options) {
         })
 
         connection.on('close', () => {
-          reject(CLOSE_MESSAGE)
+          reject()
         })
 
         connection.on('timeout', () => {
-          reject(TIMEOUT_MESSAGE)
+          reject()
         })
       })
     },
