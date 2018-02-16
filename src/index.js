@@ -141,6 +141,7 @@ function prepareColumns(data) {
  */
 
 function HbaseClient(options) {
+  const self = this
   this._prefix = options.prefix || ''
   this.logStats = (options.logLevel && options.logLevel > 3) ? true : false
 
@@ -165,10 +166,6 @@ function HbaseClient(options) {
         const i = Math.floor(Math.random() * servers.length)
         const server = servers[i]
 
-        const timeout = setTimeout(() => {
-          reject()
-        }, options.timeout || 30000)
-
         const connection = thrift.createConnection(server.host, server.port, {
           transport: thrift.TFramedTransport,
           protocol: thrift.TBinaryProtocol,
@@ -176,7 +173,6 @@ function HbaseClient(options) {
         })
 
         connection.once('connect', () => {
-          clearTimeout(timeout)
           connection.connection.setKeepAlive(true)
           connection.client = thrift.createClient(HBase, connection)
           resolve(connection)
@@ -187,19 +183,24 @@ function HbaseClient(options) {
         })
 
         connection.on('close', () => {
+          connection.connected = false
           reject()
         })
 
         connection.on('timeout', () => {
+          connection.connected = false
           reject()
         })
       })
     },
-    destroy: client => {}
+    destroy: client => {},
+    validate: client => {
+      return client.connected
+    }
   }
 
   const params = {
-    testOnBorrow: false,
+    testOnBorrow: true,
     max: options.max_sockets || 100,
     min: options.min_sockets || 5,
     acquireTimeoutMillis: options.timeout || 30000,
@@ -212,15 +213,27 @@ function HbaseClient(options) {
 HbaseClient.prototype.acquire = function(reject) {
   return this.pool.acquire()
   .then(client => {
-    client.on('error', reject)
-    client.on('timeout', reject.bind(this, TIMEOUT_MESSAGE))
-    client.on('close', reject.bind(this, CLOSE_MESSAGE))
+
+    const onError = reject
+    const onTimeout = reject.bind(this, TIMEOUT_MESSAGE)
+    const onClose = reject.bind(this, CLOSE_MESSAGE)
+
+    client.on('error', onError)
+    client.on('timeout', onTimeout)
+    client.on('close', onClose)
+
+    client.onRelease = function() {
+      client.removeListener('error', onError)
+      client.removeListener('timeout', onTimeout)
+      client.removeListener('close', onClose)
+    }
+
     return client
   })
 }
 
 HbaseClient.prototype.release = function(client) {
-  client.removeAllListeners()
+  client.onRelease()
   this.pool.release(client)
 }
 
