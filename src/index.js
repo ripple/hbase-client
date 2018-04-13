@@ -204,7 +204,8 @@ function HbaseClient(options) {
     max: options.max_sockets || 100,
     min: options.min_sockets || 5,
     acquireTimeoutMillis: options.timeout || 30000,
-    idleTimeoutMillis: options.timeout || 30000
+    idleTimeoutMillis: options.timeout || 30000,
+    evictionRunIntervalMillis: 30000
   }
 
   this.pool = genericPool.createPool(factory, params)
