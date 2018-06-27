@@ -8,9 +8,8 @@ const hbase = new Hbase({
   host: 'hbase',
   prefix: 'prefix',
   logLevel: 2,
-  max_sockets: 50,
-  min_sockets: 5,
-  timeout: 10000
+  max_sockets: 400,
+  min_sockets: 5
 })
 
 describe('hbase client', function() {
@@ -49,7 +48,7 @@ describe('hbase client', function() {
     })
   })
 
-  it('should handle resource timeout error', function() {
+  it('should handle client timeout error', function() {
     const hb = new Hbase({
       host: 'hbase',
       prefix: 'prefix',
@@ -73,7 +72,7 @@ describe('hbase client', function() {
     return Promise.all(list)
     .then(assert)
     .catch(err => {
-      assert.strictEqual(err.toString(), 'TimeoutError: ResourceRequest timed out')
+      assert.strictEqual(err.toString(), 'HBase client timeout')
     })
   })
 

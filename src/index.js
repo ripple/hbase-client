@@ -7,6 +7,14 @@ const HBaseTypes = require('./gen/Hbase_types')
 const TIMEOUT_MESSAGE = 'HBase client timeout'
 const CLOSE_MESSAGE = 'HBase client connection closed'
 
+const ACQUIRE_TIMEOUT = 5000;
+const IDLE_TIMEOUT = 30000;
+const EVICTION_TIMEOUT = 10000;
+const DEFAULT_TIMEOUT = 30000;
+const DEFAULT_PORT = 9090;
+const DEFAULT_MAX_SOCKETS = 100;
+const DEFAULT_MIN_SOCKETS = 5;
+
 function addFilters(filters) {
   const list = []
 
@@ -143,6 +151,7 @@ function prepareColumns(data) {
 function HbaseClient(options) {
   const self = this
   this._prefix = options.prefix || ''
+  this._timeout = options.timeout || DEFAULT_TIMEOUT;
   this.logStats = (options.logLevel && options.logLevel > 3) ? true : false
 
   this.log = new Logger({
@@ -156,7 +165,7 @@ function HbaseClient(options) {
   if (!servers.length) {
     servers.push({
       host: options.host,
-      port: options.port || 9090
+      port: options.port || DEFAULT_PORT
     })
   }
 
@@ -169,7 +178,8 @@ function HbaseClient(options) {
         const connection = thrift.createConnection(server.host, server.port, {
           transport: thrift.TFramedTransport,
           protocol: thrift.TBinaryProtocol,
-          timeout: options.timeout || 30000
+          timeout: self._timeout,
+          connect_timeout: ACQUIRE_TIMEOUT
         })
 
         connection.once('connect', () => {
@@ -178,18 +188,16 @@ function HbaseClient(options) {
           resolve(connection)
         })
 
-        connection.on('error', err => {
-          reject(err)
-        })
+        connection.on('error', reject);
 
         connection.on('close', () => {
           connection.connected = false
-          reject()
+          reject('connection closed')
         })
 
         connection.on('timeout', () => {
           connection.connected = false
-          reject()
+          reject('connection timeout')
         })
       })
     },
@@ -201,40 +209,37 @@ function HbaseClient(options) {
 
   const params = {
     testOnBorrow: true,
-    max: options.max_sockets || 100,
-    min: options.min_sockets || 5,
-    acquireTimeoutMillis: 5000,
-    idleTimeoutMillis: 45000,
-    evictionRunIntervalMillis: 5000
+    max: options.max_sockets || DEFAULT_MAX_SOCKETS,
+    min: options.min_sockets || DEFAULT_MIN_SOCKETS,
+    acquireTimeoutMillis: ACQUIRE_TIMEOUT,
+    idleTimeoutMillis: IDLE_TIMEOUT,
+    evictionRunIntervalMillis: EVICTION_TIMEOUT
   }
 
-  this.pool = genericPool.createPool(factory, params)
+  this.pool = genericPool.createPool(factory, params);
 }
 
 HbaseClient.prototype.acquire = function(reject) {
+  const self = this;
   return this.pool.acquire()
   .then(client => {
-
-    const onError = reject
-    const onTimeout = reject.bind(this, TIMEOUT_MESSAGE)
-    const onClose = reject.bind(this, CLOSE_MESSAGE)
-
-    client.on('error', onError)
-    client.on('timeout', onTimeout)
-    client.on('close', onClose)
-
-    client.onRelease = function() {
-      client.removeListener('error', onError)
-      client.removeListener('timeout', onTimeout)
-      client.removeListener('close', onClose)
+    const handleRejection = error => {
+      self.release(client);
+      reject(error);
     }
 
+    const onTimeout = handleRejection.bind(this, TIMEOUT_MESSAGE)
+    const onClose = handleRejection.bind(this, CLOSE_MESSAGE)
+
+    client.on('error', handleRejection)
+    client.on('timeout', onTimeout)
+    client.on('close', onClose)
     return client
   })
 }
 
 HbaseClient.prototype.release = function(client) {
-  client.onRelease()
+  client.removeAllListeners()
   this.pool.release(client)
 }
 
@@ -484,8 +489,12 @@ HbaseClient.prototype.getScan = function(options) {
     scanOpts.startRow = options.marker.toString()
   }
 
-
   return new Promise((resolve, reject) => {
+
+    const timer = setTimeout(() => {
+      reject(TIMEOUT_MESSAGE);
+    }, self._timeout);
+
     self.acquire(reject)
     .then(connection => {
       const scan = new HBaseTypes.TScan(scanOpts)
@@ -493,6 +502,7 @@ HbaseClient.prototype.getScan = function(options) {
       let d = Date.now()
 
       function handleResponse(rows) {
+        clearTimeout(timer);
         self.release(connection)
         d = ((Date.now() - d)/1000) + 's'
         self.log.info('query:getScan',
