@@ -1,19 +1,9 @@
-const thrift = require('thrift')
-const Logger = require('./logger')
-const genericPool = require('generic-pool')
-const HBase = require('./gen/Hbase')
+const Logger = require('./logger');
+const client = require('./client');
 const HBaseTypes = require('./gen/Hbase_types')
 
-const TIMEOUT_MESSAGE = 'HBase client timeout'
-const CLOSE_MESSAGE = 'HBase client connection closed'
-
-const ACQUIRE_TIMEOUT = 5000;
-const IDLE_TIMEOUT = 30000;
-const EVICTION_TIMEOUT = 10000;
+const TIMEOUT_MESSAGE = 'thrift client scan timeout'
 const DEFAULT_TIMEOUT = 30000;
-const DEFAULT_PORT = 9090;
-const DEFAULT_MAX_SOCKETS = 100;
-const DEFAULT_MIN_SOCKETS = 5;
 
 function addFilters(filters) {
   const list = []
@@ -150,8 +140,8 @@ function prepareColumns(data) {
 
 function HbaseClient(options) {
   const self = this
-  this._prefix = options.prefix || ''
   this._timeout = options.timeout || DEFAULT_TIMEOUT;
+  this._prefix = options.prefix || ''
   this.logStats = (options.logLevel && options.logLevel > 3) ? true : false
 
   this.log = new Logger({
@@ -160,88 +150,17 @@ function HbaseClient(options) {
     file: options.logFile
   })
 
-  const servers = options.servers || []
-
-  if (!servers.length) {
-    servers.push({
-      host: options.host,
-      port: options.port || DEFAULT_PORT
-    })
-  }
-
-  const factory = {
-    create: function() {
-      return new Promise(function(resolve, reject) {
-        const i = Math.floor(Math.random() * servers.length)
-        const server = servers[i]
-
-        const connection = thrift.createConnection(server.host, server.port, {
-          transport: thrift.TFramedTransport,
-          protocol: thrift.TBinaryProtocol,
-          timeout: self._timeout,
-          connect_timeout: ACQUIRE_TIMEOUT
-        })
-
-        connection.once('connect', () => {
-          connection.connection.setKeepAlive(true)
-          connection.client = thrift.createClient(HBase, connection)
-          resolve(connection)
-        })
-
-        connection.on('error', reject);
-
-        connection.on('close', () => {
-          connection.connected = false
-          reject('connection closed')
-        })
-
-        connection.on('timeout', () => {
-          connection.connected = false
-          reject('connection timeout')
-        })
-      })
-    },
-    destroy: client => {},
-    validate: client => {
-      return client.connected
-    }
-  }
-
-  const params = {
-    testOnBorrow: true,
-    max: options.max_sockets || DEFAULT_MAX_SOCKETS,
-    min: options.min_sockets || DEFAULT_MIN_SOCKETS,
-    acquireTimeoutMillis: ACQUIRE_TIMEOUT,
-    idleTimeoutMillis: IDLE_TIMEOUT,
-    evictionRunIntervalMillis: EVICTION_TIMEOUT
-  }
-
-  this.pool = genericPool.createPool(factory, params);
+  this.client = new client(options);
 }
+
+
+HbaseClient.prototype.release = function(connection) {
+  //this.client.release(connection);
+};
 
 HbaseClient.prototype.acquire = function(reject) {
-  const self = this;
-  return this.pool.acquire()
-  .then(client => {
-    const handleRejection = error => {
-      self.release(client);
-      reject(error);
-    }
-
-    const onTimeout = handleRejection.bind(this, TIMEOUT_MESSAGE)
-    const onClose = handleRejection.bind(this, CLOSE_MESSAGE)
-
-    client.on('error', handleRejection)
-    client.on('timeout', onTimeout)
-    client.on('close', onClose)
-    return client
-  })
-}
-
-HbaseClient.prototype.release = function(client) {
-  client.removeAllListeners()
-  this.pool.release(client)
-}
+  return this.client.getConnection();
+};
 
 /**
  * getRow

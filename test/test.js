@@ -7,9 +7,7 @@ const HbaseRest = require('hbase')
 const hbase = new Hbase({
   host: 'hbase',
   prefix: 'prefix',
-  logLevel: 2,
-  max_sockets: 400,
-  min_sockets: 5
+  logLevel: 2
 })
 
 describe('hbase client', function() {
@@ -42,7 +40,9 @@ describe('hbase client', function() {
       table: '12345',
       rowkey: mock.row.rowkey
     })
-    .then(assert)
+    .then(() => {
+      assert();
+    })
     .catch(err => {
       assert.strictEqual(err.name, 'IOError')
     })
@@ -53,12 +53,36 @@ describe('hbase client', function() {
       host: 'hbase',
       prefix: 'prefix',
       logLevel: 2,
-      max_sockets: 5,
-      min_sockets: 5,
       timeout: 100
     })
 
-    let i = 30
+    let i = 5
+    const list = []
+    while (i--) {
+      list.push(hb.getRow({
+        table: 'test',
+        rowkey: 'A',
+      }))
+    }
+
+    return Promise.all(list)
+    .then(() => {
+      assert();
+    })
+    .catch(err => {
+      assert.strictEqual(err.toString(), 'thrift client connection timeout')
+    })
+  })
+
+  it('should handle client timeout error (scan)', function() {
+    const hb = new Hbase({
+      host: 'hbase',
+      prefix: 'prefix',
+      logLevel: 2,
+      timeout: 100
+    })
+
+    let i = 5
     const list = []
     while (i--) {
       list.push(hb.getScan({
@@ -70,9 +94,11 @@ describe('hbase client', function() {
     }
 
     return Promise.all(list)
-    .then(assert)
+    .then(() => {
+      assert();
+    })
     .catch(err => {
-      assert.strictEqual(err.toString(), 'HBase client timeout')
+      assert.strictEqual(err.toString(), 'thrift client scan timeout')
     })
   })
 
