@@ -5,13 +5,10 @@ const Hbase = require('../src/index.js')
 const HbaseRest = require('hbase')
 
 const hbase = new Hbase({
-  hosts: ['hbase'],
-  root: '/hbase',
+  host: 'hbase',
+  //port: 9090,
   prefix: 'prefix',
-  logLevel: 2,
-  max_sockets: 50,
-  min_sockets: 2,
-  timeout: 10000
+  logLevel: 2
 })
 
 describe('hbase client', function() {
@@ -38,38 +35,54 @@ describe('hbase client', function() {
     })
   })
 
-
   it('should handle client error', function() {
-    const hb = new Hbase({
-      hosts: ['hbase'],
-      root: '/hbase',
-      prefix: 'prefix',
-      min_sockets: 1,
-      timeout: 1
-    })
-
-    return hb.getRow({
-      table: mock.row.table,
+    return hbase.getRow({
+      table: '12345',
       rowkey: mock.row.rowkey
     })
-    .then(assert)
+    .then(() => {
+      assert();
+    })
     .catch(err => {
-      assert.strictEqual(err.toString(), 'Failed to connect to zookeeper. zkHosts: ' +
-                         '[hbase] zkRoot: \'/hbase\'')
+      assert.strictEqual(err.name, 'IOError')
     })
   })
 
-  it('should handle resource timeout error', function() {
+  it('should handle client timeout error', function() {
     const hb = new Hbase({
-      hosts: ['hbase'],
-      root: '/hbase',
+      host: 'hbase',
       prefix: 'prefix',
-      min_sockets: 10,
-      max_sockets: 10,
+      logLevel: 2,
       timeout: 100
     })
 
-    let i = 30
+    let i = 5
+    const list = []
+    while (i--) {
+      list.push(hb.getRow({
+        table: 'test',
+        rowkey: 'A',
+      }))
+    }
+
+    return Promise.all(list)
+    .then(() => {
+      assert();
+    })
+    .catch(err => {
+      assert.strictEqual(err.toString(), 'thrift client connection timeout')
+    })
+  })
+
+  it('should handle client timeout error (scan)', function() {
+    const hb = new Hbase({
+      host: 'hbase',
+      prefix: 'prefix',
+      logLevel: 2,
+      timeout: 100
+    })
+
+    let i = 5
     const list = []
     while (i--) {
       list.push(hb.getScan({
@@ -81,9 +94,11 @@ describe('hbase client', function() {
     }
 
     return Promise.all(list)
-    .then(assert)
+    .then(() => {
+      assert();
+    })
     .catch(err => {
-      assert.strictEqual(err.toString(), 'TimeoutError: ResourceRequest timed out')
+      assert.strictEqual(err.toString(), 'thrift client scan timeout')
     })
   })
 
@@ -528,7 +543,7 @@ describe('hbase client', function() {
 
   it('should do a bunch of scans, puts, and gets', function() {
     this.timeout(7000)
-    let i = 400
+    let i = 300
     const list = []
     while (i--) {
 

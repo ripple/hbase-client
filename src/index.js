@@ -1,57 +1,32 @@
-const Logger = require('./logger')
-const hbase = require('hbase-rpc-client')
-const genericPool = require('generic-pool')
-const TIMEOUT_MESSAGE = 'HBase client timeout'
+const Logger = require('./logger');
+const client = require('./client');
+const HBaseTypes = require('./gen/Hbase_types')
 
-function addFilters(scan, filters, pass) {
+const TIMEOUT_MESSAGE = 'thrift client scan timeout'
+const DEFAULT_TIMEOUT = 30000;
 
-  if (!filters.length) {
+function addFilters(filters) {
+  const list = []
+
+  if (!filters || !filters.length) {
     return
   }
 
-  const list = new hbase.FilterList(pass)
-
   filters.forEach(filter => {
-    const comp = filter.comparator === '=' ?
-      'EQUAL' : (filter.comparator || 'EQUAL')
 
     if (filter.type === 'FamilyFilter') {
-
-      list.addFilter({
-        familyFilter: {
-          compareFilter: {
-            compareOp: 'EQUAL',
-            comparator: {
-              SubstringComparator: {
-                substr: filter.family
-              }
-            }
-          }
-        }
-      })
+      list.push('FamilyFilter (=, \'binary:' + filter.family + '\')')
 
     } else if (filter.type === 'FirstKeyOnlyFilter') {
-      list.addFilter({
-        firstKeyOnlyFilter: {}
-      })
+      list.push('FirstKeyOnlyFilter()')
 
     } else if (filter.type === 'KeyOnlyFilter') {
-      list.addFilter({
-        KeyOnlyFilter: {
-          lenAsVal: false
-        }
-      })
+      list.push('KeyOnlyFilter()')
 
     } else if (filter.type === 'DependentColumnFilter') {
-      list.addFilter({
-        DependentColumnFilter: {
-          compareFilter: {
-            compareOp: 'EQUAL'
-          },
-          columnFamily: filter.family,
-          columnQualifier: filter.qualifier
-        }
-      })
+      list.push('DependentColumnFilter(\'' +
+                filter.family + '\', \'' +
+                filter.qualifier + '\')')
 
     } else if (filter.type === 'QualifierFilter') {
 
@@ -72,48 +47,26 @@ function addFilters(scan, filters, pass) {
       throw Error('invalid filter: ' + filter.type)
 
     } else {
-
-      list.addFilter({
-        singleColumnValueFilter: {
-          columnFamily: filter.family,
-          columnQualifier: filter.qualifier,
-          compareOp: comp,
-          comparator: {
-            SubstringComparator: {
-              substr: filter.value
-            }
-          },
-          filterIfMissing: filter.latest === false ? false : true,
-          latestVersionOnly: filter.latest === false ? false : true
-        }
-      })
+      list.push(addSingleColumnValueFilter(filter))
     }
   })
 
-  scan.setFilter(list)
-}
+  return list.join(' AND ')
 
-function makePut(options) {
-  const put = new hbase.Put(options.rowkey)
+  function addSingleColumnValueFilter(d) {
+    const filterMissing = d.filterMissing === false ? false : true
+    const latest = d.latest === false ? false : true
 
-  Object.keys(options.columns).forEach(key => {
-    const parts = key.split(':')
-    const family = parts[1] ? parts[0] : 'd'
-    const qualifier = parts[1] ? parts[1] : parts[0]
-
-    let value = options.columns[key]
-
-    // stringify JSON and arrays and convert numbers to string
-    if (typeof value !== 'string') {
-      value = JSON.stringify(value)
-    }
-
-    if (value) {
-      put.add(family, qualifier, value)
-    }
-  })
-
-  return put
+    return [
+      'SingleColumnValueFilter (\'',
+      d.family, '\', \'',
+      d.qualifier, '\', ',
+      d.comparator, ', \'binary:',
+      d.value, '\', ',
+      filterMissing, ', ',
+      latest, ')'
+    ].join('')
+  }
 }
 
 /**
@@ -148,12 +101,61 @@ function formatRows(data, includeFamilies) {
 }
 
 /**
+ * prepareColumn
+ * create a columnValue object
+ * for the given column
+ */
+
+function prepareColumn(key, value) {
+  let column
+
+  const v = typeof value !== 'string' ?
+    JSON.stringify(value) : value
+
+  // default family to 'd' for data
+  const name = key.split(':')
+  column = name[1] ? name[0] : 'd'
+  column += ':' + (name[1] ? name[1] : name[0])
+
+  return new HBaseTypes.Mutation({
+    column: column,
+    value: v
+  })
+}
+
+/**
+ * prepareColumns
+ * create an array of columnValue
+ * objects for the given data
+ */
+
+function prepareColumns(data) {
+  const columns = []
+  let column
+  let value
+
+  for (column in data) {
+    value = data[column]
+
+    // ignore empty rows
+    if (!value && value !== 0) {
+      continue
+    }
+
+    columns.push(prepareColumn(column, value))
+  }
+
+  return columns
+}
+
+/**
  * HbaseClient
  * HBase client class
  */
 
 function HbaseClient(options) {
   const self = this
+  this._timeout = options.timeout || DEFAULT_TIMEOUT;
   this._prefix = options.prefix || ''
   this.logStats = (options.logLevel && options.logLevel > 3) ? true : false
 
@@ -163,60 +165,16 @@ function HbaseClient(options) {
     file: options.logFile
   })
 
-  let swap
-
-  const factory = {
-    create: function() {
-      const client = hbase({
-        zookeeperHosts: options.hosts,
-        zookeeperRoot: options.root,
-        zookeeperReconnectTimeout: (options.timeout || 30000) * 1.1,
-        rpcTimeout: (options.timeout || 30000) * 1.1,
-        callTimeout: (options.timeout || 30000) * 1.1,
-        tcpNoDelay: true,
-        tcpKeepAlive: true
-      })
-
-      client.on('timeout', function() {
-        if (client.reject) {
-          client.reject(TIMEOUT_MESSAGE)
-        }
-      })
-
-      client.on('error', function(err) {
-        if (client.reject) {
-          client.reject(err)
-        }
-      })
-
-      return client
-    },
-    destroy: client => {}
-  }
-
-  const params = {
-    testOnBorrow: false,
-    max: options.max_sockets || 100,
-    min: options.min_sockets || 5,
-    acquireTimeoutMillis: options.timeout || 30000,
-    idleTimeoutMillis: options.timeout || 30000
-  }
-
-  this.pool = genericPool.createPool(factory, params)
+  this.client = new client(options);
 }
+
+HbaseClient.prototype.release = function(connection) {
+  //this.client.release(connection);
+};
 
 HbaseClient.prototype.acquire = function(reject) {
-  return this.pool.acquire()
-  .then(client => {
-    client.reject = reject
-    return client
-  })
-}
-
-HbaseClient.prototype.release = function(client) {
-  delete client.reject
-  this.pool.release(client)
-}
+  return this.client.getConnection();
+};
 
 /**
  * getRow
@@ -226,43 +184,42 @@ HbaseClient.prototype.getRow = function(options) {
   const self = this
   const prefix = options.prefix || self._prefix
   const table = prefix + options.table
-  const get = new hbase.Get(options.rowkey)
 
   return new Promise((resolve, reject) => {
     self.acquire(reject)
-    .then(client => {
-      client.get(table, get, function(err, resp) {
-        self.release(client)
+    .then(connection => {
 
-        const row = {}
+      if (options.columns) {
+        self.log.debug('getRowWithColumns:', table, options.rowkey, options.columns)
+        connection.client.getRowWithColumns(
+                          table,
+                          options.rowkey,
+                          options.columns,
+                          null,
+                          handleResponse)
+
+      } else {
+        self.log.debug('getRow:', table, options.rowkey)
+        connection.client.getRow(
+                          table,
+                          options.rowkey,
+                          null,
+                          handleResponse)
+      }
+
+      function handleResponse(err, rows) {
+        self.release(connection)
 
         if (err) {
-          return reject(err)
+          reject(err)
         }
 
-        if (!resp) {
-          return resolve(undefined)
-        }
-
-        resolve({
-          row: resp.row,
-          columns: resp.cols
-        })
-      })
+        resolve(rows ?
+          formatRows(rows, options.includeFamilies)[0] : undefined)
+      }
     })
     .catch(reject)
-  }).then(handleResponse)
-
-  function handleResponse(row) {
-    if (row && options.columns) {
-      Object.keys(row.columns).forEach(c => {
-        if (!options.columns.includes(c)) {
-          delete row.columns[c]
-        }
-      })
-    }
-    return row ? formatRows([row], options.includeFamilies)[0] : undefined
-  }
+  })
 }
 
 /**
@@ -273,55 +230,17 @@ HbaseClient.prototype.getRows = function(options) {
   const self = this
   const prefix = options.prefix || self._prefix
   const table = prefix + options.table
-  const gets = options.rowkeys.map(rowkey => {
-    return new hbase.Get(rowkey)
-  })
-
-  if (!gets.length) {
-    return Promise.resolve([])
-  }
-
-  function handleResponse(rows) {
-    let filtered = rows
-    if (options.columns) {
-
-      rows.forEach(row => {
-        Object.keys(row.columns).forEach(c => {
-          if (!options.columns.includes(c)) {
-            delete row.columns[c]
-          }
-        })
-      })
-
-      filtered = rows.filter(d => {
-        return Boolean(Object.keys(d.columns).length)
-      })
-    }
-
-    return filtered ? formatRows(filtered, options.includeFamilies) : []
-  }
 
   return new Promise((resolve, reject) => {
     self.acquire(reject)
-    .then(client => {
+    .then(connection => {
       let d = Date.now()
 
-      client.mget(table, gets, function(err, resp) {
-        self.release(client)
-
-        const rows = []
+      function handleResponse(err, rows) {
+        self.release(connection)
 
         if (err) {
-          return reject(err)
-        }
-
-        for (let i = 0; i < resp.length; i++) {
-          if (resp[i].row) {
-            rows.push({
-              row: resp[i].row,
-              columns: resp[i].cols
-            })
-          }
+          reject(err)
         }
 
         d = ((Date.now() - d)/1000) + 's'
@@ -330,8 +249,23 @@ HbaseClient.prototype.getRows = function(options) {
                       'time:' + d,
                       'rowcount:' + rows.length)
 
-        resolve(handleResponse(rows))
-      })
+        resolve(rows ? formatRows(rows, options.includeFamilies) : [])
+      }
+
+      if (options.columns) {
+        return connection.client.getRowsWithColumns(
+                  table,
+                  options.rowkeys,
+                  options.columns,
+                  null,
+                  handleResponse)
+      } else {
+        return connection.client.getRows(
+                  table,
+                  options.rowkeys,
+                  null,
+                  handleResponse)
+      }
     })
     .catch(reject)
   })
@@ -348,13 +282,40 @@ HbaseClient.prototype.putRows = function(options) {
   const prefix = options.prefix || self._prefix
   const table = prefix + options.table
   const rows = []
+  let columns
 
-  Object.keys(options.rows).forEach(key => {
-    rows.push(makePut({
-      rowkey: key,
-      columns: options.rows[key]
+  const putBatch = (batch) => {
+    return new Promise((resolve, reject) => {
+      self.acquire(reject)
+      .then(connection => {
+        connection.client.mutateRows(table, batch, null, function(err, resp) {
+          self.release(connection)
+
+          if (err) {
+            return reject(err)
+          }
+
+          resolve(batch.length)
+
+        })
+      })
+      .catch(reject)
+    })
+  }
+
+  // format rows
+  for (rowkey in options.rows) {
+    columns = prepareColumns(options.rows[rowkey])
+
+    if (!columns.length) {
+      continue
+    }
+
+    rows.push(new HBaseTypes.BatchMutation({
+      row: rowkey,
+      mutations: columns
     }))
-  })
+  }
 
   if (!rows.length) {
     return Promise.resolve(0)
@@ -366,21 +327,17 @@ HbaseClient.prototype.putRows = function(options) {
     rows: options.rows
   }, !options.removeEmptyColumns)
   .then(() => {
-    return new Promise((resolve, reject) => {
-      self.acquire(reject)
-      .then(client => {
-        client.mput(table, rows, function(err, resp) {
-          self.release(client)
+    const batches = [];
+    while(1) {
+      const batch = rows.splice(0, 500);
+      batches.push(putBatch(batch));
+      if (!rows.length) {
+        break;
+      }
+    }
 
-          if (err) {
-            return reject(err)
-          }
-
-          resolve(rows.length)
-        })
-      })
-      .catch(reject)
-    })
+    return Promise.all(batches)
+    .then(resp => resp.reduce((total, num) => total + num))
   })
 }
 
@@ -393,10 +350,7 @@ HbaseClient.prototype.putRow = function(options) {
   const self = this
   const prefix = options.prefix || self._prefix
   const table = prefix + options.table
-  const put = makePut({
-    rowkey: options.rowkey,
-    columns: options.columns
-  })
+  const columns = prepareColumns(options.columns)
 
   const rows = {}
 
@@ -414,19 +368,25 @@ HbaseClient.prototype.putRow = function(options) {
     rows: rows
   }, !options.removeEmptyColumns)
   .then(() => {
-
     return new Promise((resolve, reject) => {
       self.acquire(reject)
-      .then(client => {
-        client.put(table, put, function(err, resp) {
-          self.release(client)
+      .then(connection => {
+        connection.client.mutateRow(
+              table,
+              options.rowkey,
+              columns,
+              null,
+              handleResponse)
+
+        function handleResponse(err, resp) {
+          self.release(connection)
 
           if (err) {
-            return reject(err)
+            reject(err)
           }
 
-          resolve()
-        })
+          resolve(resp)
+        }
       })
       .catch(reject)
     })
@@ -437,12 +397,17 @@ HbaseClient.prototype.getScan = function(options) {
   const self = this
   const prefix = options.prefix || self._prefix
   const table = prefix + options.table
-  const limit = Number(options.limit)
   const scanOpts = {
     reversed: options.descending === true,
+    filterString: addFilters(options.filters)
   }
 
+  let limit = Number(options.limit)
   let swap
+
+  if (limit && !options.excludeMarker) {
+    limit += 1
+  }
 
   scanOpts.startRow = options.startRow ?
     options.startRow.toString() : undefined
@@ -462,117 +427,113 @@ HbaseClient.prototype.getScan = function(options) {
     scanOpts.stopRow = swap
   }
 
+  if (options.columns) {
+    scanOpts.columns = options.columns
+  }
+
   if (options.marker) {
     scanOpts.startRow = options.marker.toString()
   }
 
-  function handleResponse(resp) {
-    let filtered = resp.rows
-    if (options.columns) {
-      resp.rows.forEach(row => {
-        Object.keys(row.columns).forEach(c => {
-          if (!options.columns.includes(c)) {
-            delete row.columns[c]
-          }
-        })
-      })
-
-      filtered = resp.rows.filter(d => {
-        return Boolean(Object.keys(d.columns).length)
-      })
-    }
-
-    return {
-      rows: filtered ? formatRows(filtered, options.includeFamilies) : [],
-      marker: resp.marker
-    }
-  }
-
   return new Promise((resolve, reject) => {
 
+    const timer = setTimeout(() => {
+      reject(TIMEOUT_MESSAGE);
+    }, self._timeout);
+
     self.acquire(reject)
-    .then(client => {
+    .then(connection => {
+      const scan = new HBaseTypes.TScan(scanOpts)
+      const results = []
       let d = Date.now()
 
-      function done(err, data) {
-        scan.close()
-        self.release(client)
+      function handleResponse(rows) {
+        clearTimeout(timer);
+        self.release(connection)
+        d = ((Date.now() - d)/1000) + 's'
+        self.log.info('query:getScan',
+                      'table:' + table,
+                      'time:' + d,
+                      'rowcount:' + rows.length)
 
-        if (err) {
-          reject(err)
+        if (rows.length === limit &&
+           !options.excludeMarker) {
+          const marker = rows.pop().rowkey
+
+          resolve({
+            rows: rows,
+            marker: marker
+          })
+
         } else {
-
-          d = ((Date.now() - d)/1000) + 's'
-          self.log.info('query:getScan',
-            'table:' + table,
-            'time:' + d,
-            'rowcount:' + (data ? data.rows.length : null))
-          resolve(data)
+          resolve({
+            rows: rows
+          })
         }
       }
 
-      const scan = client.getScanner(table,
-                                     scanOpts.startRow,
-                                     scanOpts.stopRow)
-      if (scanOpts.reversed) {
-        scan.setReversed()
+      function getResults(id) {
+        const batchSize = 1000
+        let page = 1
+        let max
 
-      }
+        /**
+         * recursiveGetResults
+         */
 
-      if (options.filters) {
-        addFilters(scan, options.filters)
-      }
+        function recursiveGetResults() {
+          let count
 
-      const rows = []
-      getNext()
-
-      function getNext(getMarker) {
-        scan.next((err, row) => {
-          if (err) {
-            return done(err)
-          }
-
-          if (!row.row || getMarker) {
-            done(null, {
-              rows: rows,
-              marker: row.row ? row.row.toString('utf8') : undefined
-            })
-            return
-          }
-
-          if (options.columns) {
-            Object.keys(row.cols).forEach(c => {
-              if (!options.columns.includes(c)) {
-                delete row.cols[c]
-              }
-            })
-          }
-
-          if (Boolean(Object.keys(row.cols).length)) {
-            rows.push({
-              row: row.row,
-              columns: row.cols
-            })
-          }
-
-          if (rows.length === limit
-             && options.excludeMarker) {
-            done(null, {
-              rows: rows
-            })
-
-          } else if (rows.length === limit) {
-            getNext(true)
-
+          if (limit) {
+            count = Math.min(batchSize, limit - (page - 1) * batchSize)
+            max = limit
           } else {
-            getNext()
+            max = Infinity
+            count = batchSize
           }
-        })
+
+          connection.client.scannerGetList(id, count, (err, rows) => {
+            if (err) {
+              reject(err)
+              return
+            }
+
+            results.push(...formatRows(rows, options.includeFamilies))
+
+            // recursively get more
+            // results if we hit the
+            // count and are under the limit
+            if (rows.length === count &&
+                page * batchSize < max) {
+              page++
+              setImmediate(recursiveGetResults)
+
+            } else {
+              connection.client.scannerClose(id, err => {
+                if (err) {
+                  self.log.error('error closing scanner:', err)
+                }
+              })
+
+              handleResponse(results)
+            }
+          })
+        }
+
+        // recursively get results
+        recursiveGetResults()
       }
+
+      connection.client.scannerOpenWithScan(table, scan, null, function(err, resp) {
+        if (err) {
+          reject(err)
+        } else {
+          getResults(resp)
+        }
+      })
     })
     .catch(reject)
   })
-  .then(handleResponse)
 }
 
 /**
@@ -581,15 +542,34 @@ HbaseClient.prototype.getScan = function(options) {
  */
 
 HbaseClient.prototype.deleteRow = function(options) {
+  const self = this
+  const prefix = options.prefix || self._prefix
+  const table = prefix + options.table
 
   if (!options.rowkey) {
     return Promise.reject('missing required parameter: rowkey')
   }
 
-  return this._delete({
-    prefix: options.prefix,
-    table: options.table,
-    rowkey: options.rowkey
+  return new Promise((resolve, reject) => {
+    self.acquire(reject)
+    .then(connection => {
+
+      function handleResponse(err, resp) {
+        self.release(connection)
+
+        if (err) {
+          reject(err)
+        }
+
+        resolve(resp)
+      }
+
+      connection.client.deleteAllRow(table,
+                                    options.rowkey,
+                                    null,
+                                    handleResponse)
+    })
+    .catch(reject)
   })
 }
 
@@ -627,18 +607,19 @@ HbaseClient.prototype.deleteRows = function(options) {
  */
 
 HbaseClient.prototype.deleteColumns = function(options) {
+  const self = this
+  const list = []
 
-  if (!options.rowkey) {
-    return Promise.reject('missing required parameter: rowkey')
-  }
-
-
-  return this._delete({
-    prefix: options.prefix,
-    table: options.table,
-    rowkey: options.rowkey,
-    columns: options.columns
+  options.columns.forEach(d => {
+    list.push(self.deleteColumn({
+      prefix: options.prefix,
+      table: options.table,
+      rowkey: options.rowkey,
+      column: d
+    }))
   })
+
+  return Promise.all(list)
 }
 
 /**
@@ -646,37 +627,42 @@ HbaseClient.prototype.deleteColumns = function(options) {
  */
 
 HbaseClient.prototype.deleteColumn = function(options) {
+  const self = this
+  const prefix = options.prefix || self._prefix
+  const table = prefix + options.table
+  let column = options.column.split(':')
+
+  if (column.length === 1) {
+    column = 'd:' + column[0]
+  } else {
+    column = column.join(':')
+  }
 
   if (!options.rowkey) {
     return Promise.reject('missing required parameter: rowkey')
   }
 
-  return this._delete({
-    prefix: options.prefix,
-    table: options.table,
-    rowkey: options.rowkey,
-    columns: [options.column]
-  })
-
-  const del = new hbase.Delete(options.rowkey)
-
-  if (options.columns) {
-    options.columns.forEach(c => {
-      const parts = c.split(':')
-      const family = parts[1] ? parts[0] : 'd'
-      const qualifier = parts[1] ? parts[1] : parts[0]
-      del.deleteColumns(family, qualifier)
-    })
-  }
-
   return new Promise((resolve, reject) => {
-    self.client.delete(options.table, del, function(err, resp) {
-      if (err) {
-        return reject(err)
+    self.acquire(reject)
+    .then(connection => {
+
+      function handleResponse(err, resp) {
+        self.release(connection)
+
+        if (err) {
+          reject(err)
+        }
+
+        resolve(resp)
       }
 
-      resolve()
+      connection.client.deleteAll(table,
+                                  options.rowkey,
+                                  column,
+                                  null,
+                                  handleResponse)
     })
+    .catch(reject)
   })
 }
 
@@ -714,41 +700,34 @@ HbaseClient.prototype._delete = function(options) {
 
 HbaseClient.prototype._removeEmptyColumns = function(options, ignore) {
   const self = this
+  const list = []
   let key
 
   if (ignore) {
     return Promise.resolve()
   }
 
-  const list = []
-
-  Object.keys(options.rows).forEach(key => {
-    list.push(removeEmptyColumns(key, options.rows[key]))
-  })
-
-  return Promise.all(list)
-
-
-  function removeEmptyColumns(rowkey, columns) {
+  Object.keys(options.rows).forEach(rowkey => {
     const removed = []
 
-    for (key in columns) {
-      if (!columns[key] && columns[key] !== 0) {
+    for (key in options.rows[rowkey]) {
+      if (!options.rows[rowkey][key] &&
+          options.rows[rowkey][key] !== 0) {
         removed.push(key)
       }
     }
 
-    if (!removed.length) {
-      return Promise.resolve()
+    if (removed.length) {
+      list.push(self.deleteColumns({
+        prefix: options.prefix,
+        table: options.table,
+        rowkey: rowkey,
+        columns: removed
+      }))
     }
+  })
 
-    return self._delete({
-      prefix: options.prefix,
-      table: options.table,
-      rowkey: rowkey,
-      columns: removed
-    })
-  }
+  return Promise.all(list)
 }
 
 module.exports = HbaseClient
