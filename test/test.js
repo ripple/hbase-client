@@ -6,6 +6,7 @@ const HbaseRest = require('hbase')
 
 const hbase = new Hbase({
   host: 'hbase',
+  //port: 9090,
   prefix: 'prefix',
   logLevel: 2
 })
@@ -33,7 +34,6 @@ describe('hbase client', function() {
       })
     })
   })
-
 
   it('should handle client error', function() {
     return hbase.getRow({

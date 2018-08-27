@@ -2,20 +2,20 @@ const thrift = require('thrift')
 const HBase = require('./gen/Hbase')
 const HBaseTypes = require('./gen/Hbase_types')
 
-const ACQUIRE_TIMEOUT = 5000;
+const ACQUIRE_TIMEOUT = 2000;
 const DEFAULT_TIMEOUT = 30000;
 const DEFAULT_PORT = 9090;
-const DEFAULT_MAX_SOCKETS = 1;
+const RETRY_INTERVAL = 20;
 
 function client(options) {
+  const self = this;
+
   this._timeout = options.timeout || DEFAULT_TIMEOUT;
   this._host = options.host;
-  this._port = options.port || 9090;
+  this._port = options.port || DEFAULT_PORT;
   this._connection;
 
   this.getConnection = () => {
-    const self = this;
-
     return new Promise((resolve, reject) => {
       let timer;
       let acquire = setTimeout(() => {
@@ -24,87 +24,65 @@ function client(options) {
       }, ACQUIRE_TIMEOUT);
 
       function getConnection() {
-        if (self.connection &&
-            self.connection.connected &&
-           Object.keys(self.connection.client._reqs).length < 2000) {
+        if (!self.connection || self.connection.closed) {
+          createConnection();
+
+        } else if (self.connection && self.connection.connected) {
           clearTimeout(acquire);
           resolve(self.connection);
           return;
         }
 
-        // wait for connect
-        if (self.connection) {
-          timer = setTimeout(getConnection, 20);
-          return;
-        }
-
-        createConnection()
-        .then(connection => {
-          clearTimeout(acquire);
-          resolve(connection);
-        })
-        .catch(reject);
+        timer = setTimeout(getConnection, RETRY_INTERVAL);
       }
 
       getConnection();
     });
+  }
 
-    function createConnection() {
-      return new Promise(function(resolve, reject) {
+  function createConnection() {
+    const timer = setTimeout(() => {
+      connection.error('thrift client resource timeout');
+    }, ACQUIRE_TIMEOUT);
 
-        const connection = thrift.createConnection(self._host, self._port, {
-          transport: thrift.TFramedTransport,
-          protocol: thrift.TBinaryProtocol,
-          timeout: self._timeout
-        });
+    const connection = thrift.createConnection(self._host, self._port, {
+      transport: thrift.TFramedTransport,
+      protocol: thrift.TBinaryProtocol,
+      timeout: self._timeout,
+    });
 
-        // handle errors
-        connection.error = function(err) {
-          this.connected = false
+    // handle errors
+    connection.error = function(err) {
+      // destroy the connection
+      this.connection.destroy()
+      this.closed = true;
 
-          // execute any callbacks, then delete
-          if (this.client) {
-            for (var key in this.client._reqs) {
-              this.client._reqs[key](err)
-              delete (this.client._reqs[key])
-            }
-          }
-
-          // destroy the connection
-          this.connection.destroy()
-          delete self.connection;
-        };
-
-        self.connection = connection;
-        connection.once('error', handleNewConnectionError)
-        connection.once('connect', onConnect)
-
-        function handleNewConnectionError(err) {
-          reject('error opening connection: ' + err)
-          clearTimeout(acquire);
+      // execute any callbacks, then delete
+      if (this.client) {
+        for (var key in this.client._reqs) {
+          this.client._reqs[key](err)
         }
+      }
+    };
 
+    connection.on('timeout', function() {
+      this.error('thrift client connection timeout')
+    });
 
-        function onConnect() {
-          this.removeListener('error', handleNewConnectionError)
-          this.client = thrift.createClient(HBase, this)
+    connection.on('close', function() {
+      this.error('thrift connection closed')
+    });
 
-          this.on('timeout', function() {
-            this.error('thrift client connection timeout')
-          })
+    connection.on('error', function(err) {
+      this.error('thrift connection error: ' + err)
+    });
 
-          this.on('close', function() {
-            this.error('hbase connection closed')
-          })
+    connection.once('connect', function() {
+      clearTimeout(timer);
+      this.client = thrift.createClient(HBase, this)
+    });
 
-          this.on('error', function(err) {
-            this.error('thrift connection error: ' + err)
-          })
-
-          resolve(this);
-        }
-      });
-    }
+    self.connection = connection;
   }
 }
 

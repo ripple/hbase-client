@@ -270,6 +270,25 @@ HbaseClient.prototype.putRows = function(options) {
   const rows = []
   let columns
 
+  const putBatch = (batch) => {
+    return new Promise((resolve, reject) => {
+      self.acquire(reject)
+      .then(connection => {
+        connection.client.mutateRows(table, batch, null, function(err, resp) {
+          self.release(connection)
+
+          if (err) {
+            return reject(err)
+          }
+
+          resolve(batch.length)
+
+        })
+      })
+      .catch(reject)
+    })
+  }
+
   // format rows
   for (rowkey in options.rows) {
     columns = prepareColumns(options.rows[rowkey])
@@ -288,29 +307,23 @@ HbaseClient.prototype.putRows = function(options) {
     return Promise.resolve(0)
   }
 
-
   return self._removeEmptyColumns({
     prefix: options.prefix,
     table: options.table,
     rows: options.rows
   }, !options.removeEmptyColumns)
   .then(() => {
-    return new Promise((resolve, reject) => {
-      self.acquire(reject)
-      .then(connection => {
-        connection.client.mutateRows(table, rows, null, function(err, resp) {
-          self.release(connection)
+    const batches = [];
+    while(1) {
+      const batch = rows.splice(0, 500);
+      batches.push(putBatch(batch));
+      if (!rows.length) {
+        break;
+      }
+    }
 
-          if (err) {
-            return reject(err)
-          }
-
-          resolve(rows.length)
-
-        })
-      })
-      .catch(reject)
-    })
+    return Promise.all(batches)
+    .then(resp => resp.reduce((total, num) => total + num))
   })
 }
 
