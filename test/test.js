@@ -49,14 +49,15 @@ describe('hbase client', function() {
   })
 
   it('should handle client timeout error', function() {
+    this.timeout(5000);
     const hb = new Hbase({
       host: 'hbase',
       prefix: 'prefix',
       logLevel: 2,
-      timeout: 100
+      timeout: 10
     })
 
-    let i = 5
+    let i = 1
     const list = []
     while (i--) {
       list.push(hb.getRow({
@@ -79,7 +80,7 @@ describe('hbase client', function() {
       host: 'hbase',
       prefix: 'prefix',
       logLevel: 2,
-      timeout: 100
+      timeout: 10
     })
 
     let i = 5

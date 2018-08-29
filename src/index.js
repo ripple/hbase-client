@@ -169,7 +169,7 @@ function HbaseClient(options) {
 }
 
 HbaseClient.prototype.release = function(connection) {
-  //this.client.release(connection);
+  this.client.release(connection);
 };
 
 HbaseClient.prototype.acquire = function(reject) {

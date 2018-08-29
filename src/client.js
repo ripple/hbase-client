@@ -5,7 +5,9 @@ const HBaseTypes = require('./gen/Hbase_types')
 const ACQUIRE_TIMEOUT = 2000;
 const DEFAULT_TIMEOUT = 30000;
 const DEFAULT_PORT = 9090;
-const RETRY_INTERVAL = 20;
+const RETRY_INTERVAL = 10;
+const DEFAULT_MAX = 50;
+const DEFAULT_MIN = 10;
 
 function client(options) {
   const self = this;
@@ -13,7 +15,14 @@ function client(options) {
   this._timeout = options.timeout || DEFAULT_TIMEOUT;
   this._host = options.host;
   this._port = options.port || DEFAULT_PORT;
-  this._connection;
+  this._MAX = options.max_sockets || DEFAULT_MAX;
+  this._MIN = options.min_sockets || DEFAULT_MIN;
+  this._connections = [];
+
+  let count = 0;
+  while(count++ < this._MIN) {
+    createConnection();
+  }
 
   this.getConnection = () => {
     return new Promise((resolve, reject) => {
@@ -24,20 +33,37 @@ function client(options) {
       }, ACQUIRE_TIMEOUT);
 
       function getConnection() {
-        if (!self.connection || self.connection.closed) {
-          createConnection();
+        let found = false;
+        self._connections.sort((a, b) => a.queries - b.queries);
+        self._connections.every(d => {
+          if (d.connected) {
+            d.queries++;
+            clearTimeout(acquire);
+            resolve(d);
+            found = true;
+            return false;
+          }
 
-        } else if (self.connection && self.connection.connected) {
-          clearTimeout(acquire);
-          resolve(self.connection);
-          return;
+          return true;
+        });
+
+
+        if (self._connections.length < self._MIN ||
+          (self._connections[0].queries > 20 && self._connections.length < self._MAX)) {
+          createConnection();
         }
 
-        timer = setTimeout(getConnection, RETRY_INTERVAL);
+        if (!found) {
+          timer = setTimeout(getConnection, RETRY_INTERVAL);
+        }
       }
 
       getConnection();
     });
+  }
+
+  this.release = connection => {
+    connection.queries--;
   }
 
   function createConnection() {
@@ -63,6 +89,15 @@ function client(options) {
           this.client._reqs[key](err)
         }
       }
+
+      // remove from pool
+      for (var j = 0; j < self._connections.length; j++) {
+        if (self._connections[j] === this) {
+          delete self._connections[j];
+          self._connections.splice(j, 1)
+          break;
+        }
+      }
     };
 
     connection.on('timeout', function() {
@@ -82,7 +117,8 @@ function client(options) {
       this.client = thrift.createClient(HBase, this)
     });
 
-    self.connection = connection;
+    connection.queries = 0;
+    self._connections.push(connection);
   }
 }
 
