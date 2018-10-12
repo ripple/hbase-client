@@ -656,20 +656,23 @@ describe('hbase client', function() {
   })
 
   it('should save multiple rows while removing empty columns', function() {
-    mock.rows.removeEmptyColumns = true
-    mock.rows.rows['ROW|3'].column1 = ''
-    mock.rows.rows['ROW|4'].column6 = ''
-
-    return hbase.putRows(mock.rows)
+    return hbase.putRows({
+      table: mock.rows.table,
+      rows: {
+        'ROW|4' : { column5: '' },
+        'ROW|5' : { column6: '' }
+      },
+      removeEmptyColumns: true
+    })
     .then(count => {
-      assert.strictEqual(count, Object.keys(mock.rows.rows).length)
+      assert.strictEqual(count, 0);
       return hbase.getRows({
         table: mock.rows.table,
-        rowkeys: ['ROW|3', 'ROW|4']
+        rowkeys: ['ROW|4', 'ROW|5']
       })
       .then(rows => {
-        assert.strictEqual(rows[0].columns.column1, undefined)
-        assert.strictEqual(rows[0].columns.column2, 'two')
+        assert.strictEqual(rows[0].columns.column5, undefined)
+        assert.strictEqual(rows[0].columns.column6, '6')
         assert.strictEqual(rows[1].columns.column6, undefined)
         assert.strictEqual(rows[1].columns.column5, '5')
       })

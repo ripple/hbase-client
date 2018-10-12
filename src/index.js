@@ -317,7 +317,7 @@ HbaseClient.prototype.putRows = function(options) {
     }))
   }
 
-  if (!rows.length) {
+  if (!rows.length && !options.removeEmptyColumns) {
     return Promise.resolve(0)
   }
 
