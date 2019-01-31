@@ -247,7 +247,7 @@ HbaseClient.prototype.getRows = function(options) {
         self.log.info('query:getRows',
                       'table:' + table,
                       'time:' + d,
-                      'rowcount:' + rows.length)
+                      'rowcount:' + rows ? rows.length : 0)
 
         resolve(rows ? formatRows(rows, options.includeFamilies) : [])
       }
