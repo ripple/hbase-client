@@ -244,10 +244,11 @@ HbaseClient.prototype.getRows = function(options) {
         }
 
         d = ((Date.now() - d)/1000) + 's'
+
         self.log.info('query:getRows',
                       'table:' + table,
                       'time:' + d,
-                      'rowcount:' + rows ? rows.length : 0)
+                      'rowcount:' + (rows ? rows.length : 0))
 
         resolve(rows ? formatRows(rows, options.includeFamilies) : [])
       }
