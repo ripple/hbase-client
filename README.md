@@ -1,7 +1,7 @@
 ## Ripple Hbase Client
 
 #### Usage:
-```
+```js
 const Hbase = require('ripple-hbase-client')
 const hbase = new Hbase({
   host: 'localhost',
